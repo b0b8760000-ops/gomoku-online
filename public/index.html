@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
+
+  <title>多人連線五子棋</title>
+
+  <link rel="stylesheet" href="/style.css" />
+</head>
+
+<body>
+  <div class="page">
+    <header class="header">
+      <div>
+        <p class="tag">ONLINE GOMOKU</p>
+        <h1>多人連線五子棋</h1>
+        <p class="subtitle">
+          系統將自動配對兩位玩家，黑棋先行。
+        </p>
+      </div>
+
+      <div class="connection">
+        <span id="connectionDot" class="dot"></span>
+        <span id="connectionText">正在連線...</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <div id="loginSection">
+          <h2>加入對戰</h2>
+
+          <label for="playerName">玩家名稱</label>
+
+          <input
+            id="playerName"
+            type="text"
+            maxlength="20"
+            placeholder="例如：學良"
+          />
+
+          <button id="joinButton">
+            開始配對
+          </button>
+        </div>
+
+        <div id="gameInfo" class="hidden">
+          <h2>遊戲資訊</h2>
+
+          <div class="infoRow">
+            <span>房間</span>
+            <strong id="roomId">尚未配對</strong>
+          </div>
+
+          <div class="infoRow">
+            <span>我的棋子</span>
+            <strong id="myColor">尚未分配</strong>
+          </div>
+
+          <div class="infoRow">
+            <span>目前狀態</span>
+            <strong id="statusText">等待中</strong>
+          </div>
+
+          <div class="players">
+            <div class="playerCard">
+              <div class="miniStone black"></div>
+              <div>
+                <small>黑棋</small>
+                <p id="blackPlayer">等待玩家</p>
+              </div>
+            </div>
+
+            <div class="playerCard">
+              <div class="miniStone white"></div>
+              <div>
+                <small>白棋</small>
+                <p id="whitePlayer">等待玩家</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="boardPanel">
+        <div id="board" class="board"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
