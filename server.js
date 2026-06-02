@@ -178,7 +178,44 @@ const PlayerStats =
     "PlayerStats",
     playerStatsSchema
   );
+// ==========================================
+// MongoDB：公開聊天室訊息 Schema
+// Collection 名稱：global_messages
+// ==========================================
+const globalMessageSchema =
+  new mongoose.Schema(
+    {
+      playerName: {
+        type: String,
+        required: true,
+        trim: true,
+        maxlength: 20
+      },
 
+      message: {
+        type: String,
+        required: true,
+        trim: true,
+        maxlength: 120
+      },
+
+      createdAt: {
+        type: Date,
+        default: Date.now,
+        index: true
+      }
+    },
+    {
+      versionKey: false,
+      collection: "global_messages"
+    }
+  );
+
+const GlobalMessage =
+  mongoose.model(
+    "GlobalMessage",
+    globalMessageSchema
+  );
 // ==========================================
 // 暫存資料
 // ==========================================
@@ -194,15 +231,6 @@ const rooms = new Map();
 // ==========================================
 const waitingPrivateRooms =
   new Map();
-// ==========================================
-// 新增：公開聊天室暫存訊息
-// 所有在線玩家都可以看見
-//
-// Render 重新部署或重新啟動後會清空。
-// 若未來要永久保存，再寫入 MongoDB。
-// ==========================================
-const globalChatMessages = [];
-
 // ==========================================
 // 通用輔助函式
 // ==========================================
@@ -1852,107 +1880,171 @@ clearWaitingState(
         );
       }
     );
+// ==========================================
+// MongoDB：取得最近 100 則公開聊天室訊息
+//
+// MongoDB 查詢時：
+// 1. 先依時間由新到舊排序
+// 2. 只取最新 100 筆
+// 3. 使用 reverse() 改成舊到新
+//    方便聊天室由上往下顯示
+// ==========================================
+async function getRecentGlobalMessages() {
+  const messages =
+    await GlobalMessage
+      .find({})
+      .sort({
+        createdAt: -1,
+        _id: -1
+      })
+      .limit(100)
+      .lean();
 
+  return messages
+    .reverse()
+    .map((item) => ({
+      type: "player",
+
+      playerName:
+        item.playerName,
+
+      message:
+        item.message,
+
+      createdAt:
+        item.createdAt
+    }));
+}
         // ======================================
     // 新增：取得公開聊天室歷史訊息
     // ======================================
-    socket.on(
-      "getGlobalChatHistory",
-      () => {
-        socket.emit(
-          "globalChatHistory",
-          globalChatMessages
-        );
-      }
-    );
+// ======================================
+// 取得公開聊天室歷史訊息
+// 只讀取 MongoDB 最近 100 則
+// ======================================
+socket.on(
+  "getGlobalChatHistory",
+  async () => {
+    try {
+      const messages =
+        await getRecentGlobalMessages();
 
-    // ======================================
-    // 新增：公開聊天室
-    // 所有在線玩家都可以看到
-    // ======================================
-    socket.on(
-      "sendGlobalChatMessage",
-      (data) => {
-        const now =
-          Date.now();
+      socket.emit(
+        "globalChatHistory",
+        messages
+      );
+    } catch (error) {
+      console.error(
+        "❌ 讀取公開聊天室失敗：",
+        error.message
+      );
 
-        // 避免短時間大量洗版
-        if (
-          now -
-            (socket.data
-              .lastGlobalChatAt || 0) <
-          700
-        ) {
-          socket.emit(
-            "errorMessage",
-            "訊息傳送過快，請稍候再試"
-          );
+      socket.emit(
+        "errorMessage",
+        "公開聊天室載入失敗，請稍後再試"
+      );
+    }
+  }
+);
+// ======================================
+// 公開聊天室
+// 1. 檢查洗版頻率
+// 2. 清理玩家名稱與訊息
+// 3. 寫入 MongoDB
+// 4. 廣播給所有在線玩家
+// ======================================
+socket.on(
+  "sendGlobalChatMessage",
+  async (data) => {
+    const now =
+      Date.now();
 
-          return;
-        }
+    // 避免短時間大量洗版
+    if (
+      now -
+        (
+          socket.data
+            .lastGlobalChatAt || 0
+        ) <
+      700
+    ) {
+      socket.emit(
+        "errorMessage",
+        "訊息傳送過快，請稍候再試"
+      );
 
-        const playerName =
-          cleanPlayerName(
-            socket.data.displayName ||
-              data?.name
-          );
+      return;
+    }
 
-        const message =
-          cleanChatMessage(
-            data?.message
-          );
+    const playerName =
+      cleanPlayerName(
+        socket.data.displayName ||
+          data?.name
+      );
 
-        if (!playerName) {
-          socket.emit(
-            "errorMessage",
-            "請先輸入玩家名稱"
-          );
+    const message =
+      cleanChatMessage(
+        data?.message
+      );
 
-          return;
-        }
+    if (!playerName) {
+      socket.emit(
+        "errorMessage",
+        "請先輸入玩家名稱"
+      );
 
-        if (!message) {
-          return;
-        }
+      return;
+    }
 
-        socket.data.displayName =
-          playerName;
+    if (!message) {
+      return;
+    }
 
-        socket.data.lastGlobalChatAt =
-          now;
+    socket.data.displayName =
+      playerName;
 
-        const chatMessage = {
-          type:
-            "player",
+    socket.data.lastGlobalChatAt =
+      now;
 
+    try {
+      const savedMessage =
+        await GlobalMessage.create({
           playerName,
+          message
+        });
 
-          message,
+      const chatMessage = {
+        type:
+          "player",
 
-          createdAt:
-            new Date().toISOString()
-        };
+        playerName:
+          savedMessage.playerName,
 
-        globalChatMessages.push(
-          chatMessage
-        );
+        message:
+          savedMessage.message,
 
-        // 最多保留最近 100 則公開訊息
-        if (
-          globalChatMessages.length >
-          100
-        ) {
-          globalChatMessages.shift();
-        }
+        createdAt:
+          savedMessage.createdAt
+      };
 
-        // io.emit 代表傳送給所有在線玩家
-        io.emit(
-          "globalChatMessage",
-          chatMessage
-        );
-      }
-    );
+      // io.emit：傳送給所有在線玩家
+      io.emit(
+        "globalChatMessage",
+        chatMessage
+      );
+    } catch (error) {
+      console.error(
+        "❌ 儲存公開聊天室訊息失敗：",
+        error.message
+      );
 
+      socket.emit(
+        "errorMessage",
+        "訊息傳送失敗，請稍後再試"
+      );
+    }
+  }
+);
     // ======================================
     // 新增：聊天室
     // ======================================
@@ -2411,7 +2503,30 @@ app.get(
     }
   }
 );
+// ==========================================
+// API：查看最近 100 則公開聊天室訊息
+// ==========================================
+app.get(
+  "/api/global-messages",
+  async (req, res) => {
+    try {
+      const messages =
+        await getRecentGlobalMessages();
 
+      res.json({
+        success: true,
+        count: messages.length,
+        data: messages
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message:
+          error.message
+      });
+    }
+  }
+);
 // ==========================================
 // 啟動 Server
 // ==========================================
