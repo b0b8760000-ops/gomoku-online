@@ -2,6 +2,7 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
+
   <meta
     name="viewport"
     content="width=device-width, initial-scale=1.0"
@@ -14,36 +15,52 @@
 
 <body>
   <div class="page">
+    <!-- ======================================
+         頁首
+    ======================================= -->
     <header class="header">
       <div>
         <p class="tag">ONLINE GOMOKU</p>
+
         <h1>多人連線五子棋</h1>
+
         <p class="subtitle">
-          系統將自動配對兩位玩家，黑棋先行。
+          即時配對、同步落子，挑戰你的五子棋實力。
         </p>
       </div>
 
       <div class="connection">
         <span id="connectionDot" class="dot"></span>
-        <span id="connectionText">正在連線...</span>
+
+        <span id="connectionText">
+          正在連線...
+        </span>
       </div>
     </header>
 
+    <!-- ======================================
+         三欄式主要內容
+    ======================================= -->
     <main class="layout">
-      <section class="panel">
+      <!-- ====================================
+           左側：登入與遊戲資訊
+      ===================================== -->
+      <aside class="panel">
         <div id="loginSection">
           <h2>加入對戰</h2>
 
-          <label for="playerName">玩家名稱</label>
+          <label for="playerName">
+            玩家名稱
+          </label>
 
           <input
             id="playerName"
             type="text"
             maxlength="20"
-            placeholder="例如：bababoi"
+            placeholder="例如：學良"
           />
 
-          <button id="joinButton">
+          <button id="joinButton" type="button">
             開始配對
           </button>
         </div>
@@ -53,100 +70,249 @@
 
           <div class="infoRow">
             <span>房間</span>
-            <strong id="roomId">尚未配對</strong>
+
+            <strong id="roomId">
+              尚未配對
+            </strong>
           </div>
 
           <div class="infoRow">
             <span>我的棋子</span>
-            <strong id="myColor">尚未分配</strong>
+
+            <strong id="myColor">
+              尚未分配
+            </strong>
           </div>
 
           <div class="infoRow">
             <span>目前狀態</span>
-            <strong id="statusText">等待中</strong>
+
+            <strong id="statusText">
+              等待中
+            </strong>
           </div>
 
           <div class="players">
             <div class="playerCard">
               <div class="miniStone black"></div>
+
               <div>
                 <small>黑棋</small>
-                <p id="blackPlayer">等待玩家</p>
+
+                <p id="blackPlayer">
+                  等待玩家
+                </p>
               </div>
             </div>
 
             <div class="playerCard">
               <div class="miniStone white"></div>
+
               <div>
                 <small>白棋</small>
-                <p id="whitePlayer">等待玩家</p>
+
+                <p id="whitePlayer">
+                  等待玩家
+                </p>
               </div>
             </div>
           </div>
 
-        </div>
-      </section>
+          <!-- ================================
+               新增：悔棋功能
+          ================================= -->
+          <div class="gameActions">
+            <button
+              id="undoButton"
+              class="undoButton"
+              type="button"
+              disabled
+            >
+              申請悔棋
+            </button>
 
+            <p class="actionHint">
+              僅能撤回自己剛剛落下的最後一顆棋子。
+            </p>
+          </div>
+
+          <!-- ================================
+               新增：收到悔棋邀請
+          ================================= -->
+          <div
+            id="undoRequestBox"
+            class="undoRequestBox hidden"
+          >
+            <p id="undoRequestText">
+              對手希望撤回最後一步。
+            </p>
+
+            <div class="undoRequestActions">
+              <button
+                id="acceptUndoButton"
+                class="acceptUndoButton"
+                type="button"
+              >
+                同意
+              </button>
+
+              <button
+                id="rejectUndoButton"
+                class="rejectUndoButton"
+                type="button"
+              >
+                拒絕
+              </button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ====================================
+           中央：棋盤
+      ===================================== -->
       <section class="boardPanel">
         <div id="board" class="board"></div>
       </section>
+
+      <!-- ====================================
+           右側：排行榜與聊天室
+      ===================================== -->
+      <aside class="sideColumn">
+        <!-- ================================
+             新增：積分排行榜
+        ================================= -->
+        <section class="sideCard rankingCard">
+          <div class="sideCardHeader">
+            <div>
+              <p class="sideCardTag">
+                RANKING
+              </p>
+
+              <h2>積分排行榜</h2>
+            </div>
+
+            <button
+              id="refreshRankingButton"
+              class="iconButton"
+              type="button"
+              title="重新整理排行榜"
+            >
+              ↻
+            </button>
+          </div>
+
+          <div id="rankingList" class="rankingList">
+            <p class="emptyText">
+              尚無排行榜資料
+            </p>
+          </div>
+
+          <p class="rankingRule">
+            勝利 +3 分｜平手 +1 分｜失敗 +0 分
+          </p>
+        </section>
+
+        <!-- ================================
+             新增：聊天室
+        ================================= -->
+        <section class="sideCard chatCard">
+          <div class="sideCardHeader">
+            <div>
+              <p class="sideCardTag">
+                ROOM CHAT
+              </p>
+
+              <h2>聊天室</h2>
+            </div>
+          </div>
+
+          <div id="chatMessages" class="chatMessages">
+            <p class="emptyText">
+              配對成功後即可聊天
+            </p>
+          </div>
+
+          <form id="chatForm" class="chatForm">
+            <input
+              id="chatInput"
+              type="text"
+              maxlength="120"
+              placeholder="輸入訊息..."
+              autocomplete="off"
+              disabled
+            />
+
+            <button
+              id="sendChatButton"
+              type="submit"
+              disabled
+            >
+              傳送
+            </button>
+          </form>
+        </section>
+      </aside>
     </main>
   </div>
 
-<!-- ==========================================
-     遊戲結果彈出視窗
-========================================== -->
-<div
-  id="resultModal"
-  class="modalOverlay hidden"
-  role="dialog"
-  aria-modal="true"
-  aria-labelledby="resultTitle"
->
-  <div id="resultModalCard" class="resultModalCard">
-    <div id="resultIcon" class="resultIcon">
-      🏆
-    </div>
+  <!-- ======================================
+       遊戲結果彈出視窗
+  ======================================= -->
+  <div
+    id="resultModal"
+    class="modalOverlay hidden"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="resultTitle"
+  >
+    <div id="resultModalCard" class="resultModalCard">
+      <div id="resultIcon" class="resultIcon">
+        🏆
+      </div>
 
-    <p id="resultBadge" class="resultBadge">
-      GAME OVER
-    </p>
+      <p id="resultBadge" class="resultBadge">
+        GAME OVER
+      </p>
 
-    <h2 id="resultTitle" class="resultTitle">
-      恭喜獲勝！
-    </h2>
+      <h2 id="resultTitle" class="resultTitle">
+        恭喜獲勝！
+      </h2>
 
-    <p id="resultMessage" class="resultMessage">
-      您成功完成五子連線。
-    </p>
+      <p id="resultMessage" class="resultMessage">
+        您成功完成五子連線。
+      </p>
 
-    <p id="rematchHint" class="modalHint">
-      可以返回首頁，或邀請同一位玩家再來一局。
-    </p>
+      <p id="rematchHint" class="modalHint">
+        可以返回首頁，或邀請同一位玩家再來一局。
+      </p>
 
-    <div class="resultActions">
-      <button
-        id="homeButton"
-        class="homeButton"
-        type="button"
-      >
-        回首頁
-      </button>
+      <div class="resultActions">
+        <button
+          id="homeButton"
+          class="homeButton"
+          type="button"
+        >
+          回首頁
+        </button>
 
-      <button
-        id="rematchButton"
-        class="continueButton"
-        type="button"
-      >
-        與同對手繼續
-      </button>
+        <button
+          id="rematchButton"
+          class="continueButton"
+          type="button"
+        >
+          與同對手繼續
+        </button>
+      </div>
     </div>
   </div>
-</div>
 
-<div id="toast" class="toast hidden"></div>
+  <!-- ======================================
+       右下角提示訊息
+  ======================================= -->
+  <div id="toast" class="toast hidden"></div>
 
-<script src="/socket.io/socket.io.js"></script>
-<script src="/app.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>

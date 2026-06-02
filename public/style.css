@@ -510,3 +510,513 @@ button:disabled {
 .hidden {
   display: none !important;
 }
+/* ==========================================
+   三欄式版面
+========================================== */
+.layout {
+  display: grid;
+  grid-template-columns:
+    290px
+    minmax(540px, 1fr)
+    320px;
+
+  gap: 22px;
+  align-items: start;
+}
+
+.sideColumn {
+  display: grid;
+  gap: 18px;
+}
+
+.sideCard {
+  padding: 18px;
+
+  border-radius: 22px;
+
+  background: rgba(255, 255, 255, 0.86);
+
+  box-shadow:
+    0 16px 40px rgba(86, 65, 45, 0.1);
+}
+
+.sideCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 12px;
+
+  margin-bottom: 14px;
+}
+
+.sideCardHeader h2 {
+  margin: 0;
+
+  font-size: 20px;
+}
+
+.sideCardTag {
+  margin: 0 0 4px;
+
+  color: #9a6a36;
+
+  font-size: 11px;
+  font-weight: 800;
+
+  letter-spacing: 2px;
+}
+
+/* ==========================================
+   悔棋按鈕與邀請區塊
+========================================== */
+.gameActions {
+  margin-top: 18px;
+  padding-top: 16px;
+
+  border-top: 1px solid #ebe3da;
+}
+
+.undoButton {
+  margin-top: 0;
+
+  background: linear-gradient(135deg, #796756, #554538);
+}
+
+.undoButton:hover {
+  background: linear-gradient(135deg, #927c68, #685548);
+}
+
+.actionHint {
+  margin: 9px 0 0;
+
+  color: #88796d;
+
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.undoRequestBox {
+  margin-top: 14px;
+  padding: 13px;
+
+  border: 1px solid #ecd8a8;
+  border-radius: 14px;
+
+  background: #fff8e7;
+}
+
+.undoRequestBox p {
+  margin: 0;
+
+  color: #735b2d;
+
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.undoRequestActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+
+  gap: 8px;
+
+  margin-top: 10px;
+}
+
+.undoRequestActions button {
+  margin-top: 0;
+  padding: 10px;
+}
+
+.acceptUndoButton {
+  background: #578464;
+}
+
+.acceptUndoButton:hover {
+  background: #679d76;
+}
+
+.rejectUndoButton {
+  background: #8f5c52;
+}
+
+.rejectUndoButton:hover {
+  background: #a46a5f;
+}
+
+/* ==========================================
+   排行榜
+========================================== */
+.iconButton {
+  width: 38px;
+  height: 38px;
+
+  margin-top: 0;
+  padding: 0;
+
+  border-radius: 50%;
+
+  background: #f4eee7;
+  color: #725b48;
+
+  font-size: 22px;
+}
+
+.iconButton:hover {
+  background: #eadfd2;
+}
+
+.rankingList {
+  display: grid;
+  gap: 8px;
+}
+
+.rankingItem {
+  display: grid;
+  grid-template-columns: 30px 1fr auto;
+
+  align-items: center;
+  gap: 8px;
+
+  padding: 10px;
+
+  border-radius: 12px;
+
+  background: #f8f4ef;
+}
+
+.rankingIndex {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 28px;
+  height: 28px;
+
+  border-radius: 50%;
+
+  background: #eadcc9;
+  color: #6b4d31;
+
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.rankingIndex.topOne {
+  background: linear-gradient(135deg, #f4d675, #e5ae3f);
+}
+
+.rankingName {
+  overflow: hidden;
+
+  color: #43372f;
+
+  font-size: 14px;
+  font-weight: 700;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rankingScore {
+  color: #96602e;
+
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.rankingRule {
+  margin: 12px 0 0;
+
+  color: #8b7b6e;
+
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* ==========================================
+   聊天室
+========================================== */
+.chatMessages {
+  height: 230px;
+
+  padding: 10px;
+
+  overflow-y: auto;
+
+  border: 1px solid #eee4d9;
+  border-radius: 14px;
+
+  background: #fbf8f4;
+}
+
+.chatMessage {
+  margin-bottom: 10px;
+}
+
+.chatMessage:last-child {
+  margin-bottom: 0;
+}
+
+.chatMessageName {
+  color: #9a6a36;
+
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.chatMessageText {
+  display: inline-block;
+
+  margin-top: 3px;
+  padding: 7px 9px;
+
+  border-radius: 10px;
+
+  background: #efe5d9;
+  color: #594b3f;
+
+  font-size: 13px;
+  line-height: 1.5;
+
+  word-break: break-word;
+}
+
+.chatSystemMessage {
+  margin: 8px 0;
+
+  color: #998a7e;
+
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.chatForm {
+  display: grid;
+  grid-template-columns: 1fr 70px;
+
+  gap: 8px;
+
+  margin-top: 10px;
+}
+
+.chatForm input {
+  min-width: 0;
+}
+
+.chatForm button {
+  margin-top: 0;
+  padding: 10px 8px;
+}
+
+.emptyText {
+  margin: 10px 0;
+
+  color: #a39588;
+
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+/* ==========================================
+   結果彈出視窗
+========================================== */
+.modalOverlay {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 20px;
+
+  background: rgba(31, 23, 18, 0.58);
+
+  backdrop-filter: blur(7px);
+}
+
+.resultModalCard {
+  width: min(430px, 100%);
+
+  padding: 30px 28px 26px;
+
+  border-radius: 26px;
+
+  background: rgba(255, 255, 255, 0.97);
+
+  box-shadow:
+    0 25px 70px rgba(36, 25, 18, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+
+  text-align: center;
+
+  animation: resultModalEnter 0.28s ease-out;
+}
+
+.resultIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 82px;
+  height: 82px;
+
+  margin: 0 auto 14px;
+
+  border-radius: 50%;
+
+  background: linear-gradient(135deg, #f8e8bb, #efd38f);
+
+  font-size: 42px;
+
+  box-shadow: 0 12px 24px rgba(151, 105, 43, 0.18);
+}
+
+.resultBadge {
+  margin: 0 0 8px;
+
+  color: #9a6a36;
+
+  font-size: 12px;
+  font-weight: 800;
+
+  letter-spacing: 3px;
+}
+
+.resultTitle {
+  margin: 0;
+
+  color: #33281f;
+
+  font-size: 30px;
+}
+
+.resultMessage {
+  margin: 12px 0 0;
+
+  color: #716458;
+
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.modalHint {
+  margin: 16px 0 0;
+  padding: 11px 12px;
+
+  border-radius: 12px;
+
+  background: #f8f3ec;
+
+  color: #806f60;
+
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.resultActions {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+
+  gap: 10px;
+
+  margin-top: 20px;
+}
+
+.resultActions button {
+  margin-top: 0;
+}
+
+.homeButton {
+  border: 1px solid #dfd3c7;
+
+  background: #ffffff;
+  color: #594b3f;
+}
+
+.homeButton:hover {
+  background: #f6f0e9;
+}
+
+.continueButton {
+  background: linear-gradient(135deg, #986536, #70451f);
+  color: #ffffff;
+}
+
+.continueButton:hover {
+  background: linear-gradient(135deg, #ad7942, #86562b);
+}
+
+.resultModalCard.defeat .resultIcon {
+  background: linear-gradient(135deg, #e6edf4, #c9d5e0);
+}
+
+.resultModalCard.draw .resultIcon {
+  background: linear-gradient(135deg, #dbeee4, #b9dbc7);
+}
+
+.resultModalCard.unavailable .resultIcon {
+  background: linear-gradient(135deg, #f2ded8, #e8c3ba);
+}
+
+@keyframes resultModalEnter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ==========================================
+   平板與手機版
+========================================== */
+@media (max-width: 1250px) {
+  .layout {
+    grid-template-columns: 280px 1fr;
+  }
+
+  .sideColumn {
+    grid-column: 1 / -1;
+
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sideColumn {
+    grid-column: auto;
+
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .resultModalCard {
+    padding: 26px 18px 20px;
+  }
+
+  .resultActions {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ==========================================
+   強制隱藏
+   必須放在 CSS 最下面
+========================================== */
+.hidden {
+  display: none !important;
+}
