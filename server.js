@@ -13,6 +13,17 @@ const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
+  },
+
+  // ==========================================
+  // 短暫斷線後，嘗試恢復原本房間與事件
+  // ==========================================
+  connectionStateRecovery: {
+    // 最多允許中斷 5 分鐘後自動恢復
+    maxDisconnectionDuration: 5 * 60 * 1000,
+
+    // 恢復成功時可略過部分中介流程
+    skipMiddlewares: true
   }
 });
 
@@ -872,6 +883,29 @@ io.on(
     console.log(
       `🔌 玩家連線：${socket.id}`
     );
+        // ======================================
+    // 心跳：保持 Render Web Service 活躍
+    // ======================================
+    socket.on(
+      "clientHeartbeat",
+      (data, callback) => {
+        if (
+          typeof callback ===
+          "function"
+        ) {
+          callback({
+            success: true,
+            serverTime:
+              Date.now()
+          });
+        }
+      }
+    );
+        if (socket.recovered) {
+      console.log(
+        `♻️ 玩家連線狀態已恢復：${socket.id}`
+      );
+    }
 
     // ======================================
     // 初次取得排行榜

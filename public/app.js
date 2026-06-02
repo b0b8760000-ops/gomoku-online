@@ -1,4 +1,19 @@
-const socket = io();
+const socket = io({
+  // 自動重新連線
+  reconnection: true,
+
+  // 不限制重試次數
+  reconnectionAttempts: Infinity,
+
+  // 第一次重連等待 1 秒
+  reconnectionDelay: 1000,
+
+  // 最長等待 5 秒
+  reconnectionDelayMax: 5000,
+
+  // 單次連線逾時時間
+  timeout: 10000
+});
 
 const BOARD_SIZE = 15;
 
@@ -10,6 +25,11 @@ let currentBoard =
 
 let lastMoveColor = null;
 let undoPending = false;
+// ==========================================
+// Socket.IO 心跳與重新連線狀態
+// ==========================================
+let heartbeatTimer = null;
+let hadConnectedOnce = false;
 
 // ==========================================
 // 基本元件
@@ -127,6 +147,39 @@ const refreshRankingButton =
 // ==========================================
 // 通用函式
 // ==========================================
+// ==========================================
+// 每 30 秒通知後端：目前頁面仍然在線
+// 避免 Render 免費服務因閒置休眠
+// ==========================================
+function startHeartbeat() {
+  stopHeartbeat();
+
+  heartbeatTimer =
+    setInterval(() => {
+      if (!socket.connected) {
+        return;
+      }
+
+      socket.emit(
+        "clientHeartbeat",
+        {
+          sentAt: Date.now()
+        }
+      );
+    }, 30 * 1000);
+}
+
+function stopHeartbeat() {
+  if (!heartbeatTimer) {
+    return;
+  }
+
+  clearInterval(
+    heartbeatTimer
+  );
+
+  heartbeatTimer = null;
+}
 function showToast(message) {
   toast.textContent = message;
 
@@ -650,20 +703,80 @@ rejectUndoButton.addEventListener(
 // Socket.IO 基本連線
 // ==========================================
 socket.on("connect", () => {
-  connectionDot.classList.add("online");
+  connectionDot.classList.add(
+    "online"
+  );
 
   connectionText.textContent =
     "伺服器連線正常";
 
-  socket.emit("getLeaderboard");
+  startHeartbeat();
+
+  // 第一次開啟頁面不需要顯示恢復提示
+  if (hadConnectedOnce) {
+    if (socket.recovered) {
+      showToast(
+        "連線已恢復，可以繼續遊戲"
+      );
+    } else if (
+      myColor &&
+      gameStatus === "playing"
+    ) {
+      // 若無法恢復舊房間，避免玩家停留在失效棋盤
+      gameStatus = "finished";
+
+      statusText.textContent =
+        "連線已中斷，請重新配對";
+
+      showResultModal(
+        "unavailable"
+      );
+
+      resultTitle.textContent =
+        "遊戲連線已失效";
+
+      resultMessage.textContent =
+        "伺服器曾重新啟動或連線中斷過久，請返回首頁重新配對。";
+    }
+  }
+
+  hadConnectedOnce = true;
+
+  socket.emit(
+    "getLeaderboard"
+  );
 });
 
-socket.on("disconnect", () => {
-  connectionDot.classList.remove("online");
+socket.on(
+  "disconnect",
+  (reason) => {
+    stopHeartbeat();
 
-  connectionText.textContent =
-    "伺服器連線中斷";
-});
+    connectionDot.classList.remove(
+      "online"
+    );
+
+    connectionText.textContent =
+      "伺服器連線中斷，正在重新連線...";
+
+    if (
+      myColor &&
+      gameStatus === "playing"
+    ) {
+      statusText.textContent =
+        "連線暫時中斷，請稍候";
+
+      showToast(
+        "連線暫時中斷，系統正在嘗試恢復"
+      );
+    }
+
+    console.log(
+      "Socket.IO disconnected:",
+      reason
+    );
+  }
+);
 
 // ==========================================
 // 配對與遊戲狀態
