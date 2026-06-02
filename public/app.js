@@ -1,501 +1,179 @@
+function getOrCreatePlayerToken() {
+  let token = localStorage.getItem("gomokuPlayerToken");
+  if (!token) {
+    token = crypto.randomUUID ? crypto.randomUUID() : `player-${Date.now()}-${Math.random()}`;
+    localStorage.setItem("gomokuPlayerToken", token);
+  }
+  return token;
+}
+
+const playerToken = getOrCreatePlayerToken();
 const socket = io({
-  // 自動重新連線
   reconnection: true,
-
-  // 不限制重試次數
   reconnectionAttempts: Infinity,
-
-  // 第一次重連等待 1 秒
   reconnectionDelay: 1000,
-
-  // 最長等待 5 秒
   reconnectionDelayMax: 5000,
-
-  // 單次連線逾時時間
   timeout: 10000
 });
 
 const BOARD_SIZE = 15;
-
 let myColor = null;
 let currentTurn = null;
 let gameStatus = "waiting";
-let currentBoard =
-  Array(BOARD_SIZE * BOARD_SIZE).fill(0);
-
+let currentBoard = Array(BOARD_SIZE * BOARD_SIZE).fill(0);
 let lastMoveColor = null;
-let undoPending = false;
-// ==========================================
-// 最新一步棋座標
-// 用於在棋盤上顯示藍色外環
-// ==========================================
 let lastMove = null;
-// ==========================================
-// 是否顯示最新一步棋外環
-//
-// 預設開啟。
-// 使用 localStorage 保存玩家自己的選擇。
-// ==========================================
-let showLastMoveHighlight =
-  localStorage.getItem(
-    "gomokuShowLastMoveHighlight"
-  ) !== "false";
-// ==========================================
-// Socket.IO 心跳與重新連線狀態
-// ==========================================
+let undoPending = false;
 let heartbeatTimer = null;
-let hadConnectedOnce = false;
-
-// ==========================================
-// 基本元件
-// ==========================================
-const board = document.getElementById("board");
-
-const joinButton =
-  document.getElementById("joinButton");
-
-// ==========================================
-// 私人房間元件
-// ==========================================
-const createPrivateRoomButton =
-  document.getElementById(
-    "createPrivateRoomButton"
-  );
-
-const privateRoomCodeInput =
-  document.getElementById(
-    "privateRoomCodeInput"
-  );
-
-const joinPrivateRoomButton =
-  document.getElementById(
-    "joinPrivateRoomButton"
-  );
-
-const privateRoomStatusText =
-  document.getElementById(
-    "privateRoomStatusText"
-  );
-
-const privateRoomWaitingBox =
-  document.getElementById(
-    "privateRoomWaitingBox"
-  );
-
-const createdRoomCodeText =
-  document.getElementById(
-    "createdRoomCodeText"
-  );
-
-const cancelPrivateRoomButton =
-  document.getElementById(
-    "cancelPrivateRoomButton"
-  );
-
-const roomChatCard =
-  document.getElementById(
-    "roomChatCard"
-  );
-
-const playerNameInput =
-  document.getElementById("playerName");
-
-const loginSection =
-  document.getElementById("loginSection");
-
-const gameInfo =
-  document.getElementById("gameInfo");
-
-const roomIdText =
-  document.getElementById("roomId");
-
-const myColorText =
-  document.getElementById("myColor");
-
-const statusText =
-  document.getElementById("statusText");
-// ==========================================
-// 最新一步棋外環切換按鈕
-// ==========================================
-const lastMoveToggleButton =
-  document.getElementById(
-    "lastMoveToggleButton"
-  );
-
-const blackPlayerText =
-  document.getElementById("blackPlayer");
-
-const whitePlayerText =
-  document.getElementById("whitePlayer");
-
-const connectionDot =
-  document.getElementById("connectionDot");
-
-const connectionText =
-  document.getElementById("connectionText");
-
-const toast =
-  document.getElementById("toast");
-
-// ==========================================
-// 結果視窗
-// ==========================================
-const resultModal =
-  document.getElementById("resultModal");
-
-const resultModalCard =
-  document.getElementById("resultModalCard");
-
-const resultIcon =
-  document.getElementById("resultIcon");
-
-const resultBadge =
-  document.getElementById("resultBadge");
-
-const resultTitle =
-  document.getElementById("resultTitle");
-
-const resultMessage =
-  document.getElementById("resultMessage");
-
-const rematchHint =
-  document.getElementById("rematchHint");
-
-const homeButton =
-  document.getElementById("homeButton");
-
-const rematchButton =
-  document.getElementById("rematchButton");
-
-// ==========================================
-// 悔棋功能
-// ==========================================
-const undoButton =
-  document.getElementById("undoButton");
-
-const undoRequestBox =
-  document.getElementById("undoRequestBox");
-
-const undoRequestText =
-  document.getElementById("undoRequestText");
-
-const acceptUndoButton =
-  document.getElementById("acceptUndoButton");
-
-const rejectUndoButton =
-  document.getElementById("rejectUndoButton");
-
-// ==========================================
-// 聊天室
-// ==========================================
-const chatMessages =
-  document.getElementById("chatMessages");
-
-const chatForm =
-  document.getElementById("chatForm");
-
-const chatInput =
-  document.getElementById("chatInput");
-
-const sendChatButton =
-  document.getElementById("sendChatButton");
-
-// ==========================================
-// 新增：公開聊天室
-// ==========================================
-const globalChatMessages =
-  document.getElementById("globalChatMessages");
-
-const globalChatForm =
-  document.getElementById("globalChatForm");
-
-const globalChatInput =
-  document.getElementById("globalChatInput");
-
-const globalSendChatButton =
-  document.getElementById("globalSendChatButton");
-
-// ==========================================
-// 排行榜
-// ==========================================
-const rankingList =
-  document.getElementById("rankingList");
-
-const refreshRankingButton =
-  document.getElementById("refreshRankingButton");
-
-// ==========================================
-// 通用函式
-// ==========================================
-// ==========================================
-// 每 30 秒通知後端：目前頁面仍然在線
-// 避免 Render 免費服務因閒置休眠
-// ==========================================
-function startHeartbeat() {
-  stopHeartbeat();
-
-  heartbeatTimer =
-    setInterval(() => {
-      if (!socket.connected) {
-        return;
-      }
-
-      socket.emit(
-        "clientHeartbeat",
-        {
-          sentAt: Date.now()
-        }
-      );
-    }, 30 * 1000);
-}
-
-function stopHeartbeat() {
-  if (!heartbeatTimer) {
-    return;
-  }
-
-  clearInterval(
-    heartbeatTimer
-  );
-
-  heartbeatTimer = null;
-}
-
-// ==========================================
-// 大廳按鈕啟用與停用
-// ==========================================
-function setLobbyControlsDisabled(
-  disabled
-) {
-  joinButton.disabled =
-    disabled;
-
-  createPrivateRoomButton.disabled =
-    disabled;
-
-  privateRoomCodeInput.disabled =
-    disabled;
-
-  joinPrivateRoomButton.disabled =
-    disabled;
-}
-
-// ==========================================
-// 重設私人房間等待畫面
-// ==========================================
-function resetPrivateRoomLobby() {
-  privateRoomWaitingBox.classList.add(
-    "hidden"
-  );
-
-  createdRoomCodeText.textContent =
-    "0000";
-
-  privateRoomStatusText.textContent =
-    "建立房間後，將 4 位數房號分享給朋友。";
-
-  privateRoomCodeInput.value =
-    "";
-
-  setLobbyControlsDisabled(
-    false
-  );
-}
-// ==========================================
-// 更新最後一步提示按鈕外觀
-// ==========================================
-function updateLastMoveToggleButton() {
-  if (showLastMoveHighlight) {
-    lastMoveToggleButton.textContent =
-      "開啟";
-
-    lastMoveToggleButton.classList.add(
-      "active"
-    );
-
-    lastMoveToggleButton.setAttribute(
-      "aria-pressed",
-      "true"
-    );
-  } else {
-    lastMoveToggleButton.textContent =
-      "關閉";
-
-    lastMoveToggleButton.classList.remove(
-      "active"
-    );
-
-    lastMoveToggleButton.setAttribute(
-      "aria-pressed",
-      "false"
-    );
-  }
-}
+let currentRoomId = sessionStorage.getItem("gomokuCurrentRoomId");
+let showLastMoveHighlight = localStorage.getItem("gomokuShowLastMoveHighlight") !== "false";
+const seenGlobalMessageIds = new Set();
+
+const $ = (id) => document.getElementById(id);
+const board = $("board");
+const joinButton = $("joinButton");
+const createPrivateRoomButton = $("createPrivateRoomButton");
+const privateRoomCodeInput = $("privateRoomCodeInput");
+const joinPrivateRoomButton = $("joinPrivateRoomButton");
+const privateRoomStatusText = $("privateRoomStatusText");
+const privateRoomWaitingBox = $("privateRoomWaitingBox");
+const createdRoomCodeText = $("createdRoomCodeText");
+const cancelPrivateRoomButton = $("cancelPrivateRoomButton");
+const roomChatCard = $("roomChatCard");
+const playerNameInput = $("playerName");
+const loginSection = $("loginSection");
+const gameInfo = $("gameInfo");
+const roomIdText = $("roomId");
+const myColorText = $("myColor");
+const statusText = $("statusText");
+const lastMoveToggleButton = $("lastMoveToggleButton");
+const blackPlayerText = $("blackPlayer");
+const whitePlayerText = $("whitePlayer");
+const connectionDot = $("connectionDot");
+const connectionText = $("connectionText");
+const toast = $("toast");
+const resultModal = $("resultModal");
+const resultModalCard = $("resultModalCard");
+const resultIcon = $("resultIcon");
+const resultBadge = $("resultBadge");
+const resultTitle = $("resultTitle");
+const resultMessage = $("resultMessage");
+const rematchHint = $("rematchHint");
+const homeButton = $("homeButton");
+const rematchButton = $("rematchButton");
+const undoButton = $("undoButton");
+const undoRequestBox = $("undoRequestBox");
+const undoRequestText = $("undoRequestText");
+const acceptUndoButton = $("acceptUndoButton");
+const rejectUndoButton = $("rejectUndoButton");
+const chatMessages = $("chatMessages");
+const chatForm = $("chatForm");
+const chatInput = $("chatInput");
+const sendChatButton = $("sendChatButton");
+const globalChatMessages = $("globalChatMessages");
+const globalChatForm = $("globalChatForm");
+const globalChatInput = $("globalChatInput");
+const rankingList = $("rankingList");
+const refreshRankingButton = $("refreshRankingButton");
 
 function showToast(message) {
   toast.textContent = message;
-
   toast.classList.remove("hidden");
+  setTimeout(() => toast.classList.add("hidden"), 2500);
+}
 
-  setTimeout(() => {
-    toast.classList.add("hidden");
-  }, 2500);
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(() => {
+    if (socket.connected) socket.emit("clientHeartbeat", { sentAt: Date.now() });
+  }, 30000);
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+}
+
+function setLobbyControlsDisabled(disabled) {
+  joinButton.disabled = disabled;
+  createPrivateRoomButton.disabled = disabled;
+  privateRoomCodeInput.disabled = disabled;
+  joinPrivateRoomButton.disabled = disabled;
+}
+
+function resetPrivateRoomLobby() {
+  privateRoomWaitingBox.classList.add("hidden");
+  createdRoomCodeText.textContent = "0000";
+  privateRoomStatusText.textContent = "建立房間後，將 4 位數房號分享給朋友。";
+  privateRoomCodeInput.value = "";
+  setLobbyControlsDisabled(false);
+  joinButton.textContent = "快速配對";
+}
+
+function updateLastMoveToggleButton() {
+  lastMoveToggleButton.textContent = showLastMoveHighlight ? "開啟" : "關閉";
+  lastMoveToggleButton.classList.toggle("active", showLastMoveHighlight);
+  lastMoveToggleButton.setAttribute("aria-pressed", String(showLastMoveHighlight));
 }
 
 function getIndex(x, y) {
   return y * BOARD_SIZE + x;
 }
 
-// ==========================================
-// 棋盤
-// ==========================================
 function createBoard() {
   board.innerHTML = "";
-
-  for (let y = 0; y < BOARD_SIZE; y++) {
-    for (let x = 0; x < BOARD_SIZE; x++) {
+  for (let y = 0; y < BOARD_SIZE; y += 1) {
+    for (let x = 0; x < BOARD_SIZE; x += 1) {
       const cell = document.createElement("div");
-
       cell.className = "cell";
       cell.dataset.x = x;
       cell.dataset.y = y;
-
-      cell.addEventListener("click", () => {
-        handleCellClick(x, y);
-      });
-
+      cell.addEventListener("click", () => handleCellClick(x, y));
       board.appendChild(cell);
     }
   }
-
   renderBoard();
 }
 
 function renderBoard() {
-  const cells =
-    document.querySelectorAll(".cell");
-
-  cells.forEach((cell) => {
+  document.querySelectorAll(".cell").forEach((cell) => {
     cell.innerHTML = "";
-
     const x = Number(cell.dataset.x);
     const y = Number(cell.dataset.y);
+    const value = currentBoard[getIndex(x, y)];
+    if (value === 0) return;
 
-    const value =
-      currentBoard[getIndex(x, y)];
-
-    if (value === 0) {
-      return;
+    const stone = document.createElement("div");
+    stone.className = value === 1 ? "stone black" : "stone white";
+    if (showLastMoveHighlight && lastMove && lastMove.x === x && lastMove.y === y) {
+      stone.classList.add("lastMove");
     }
-
-    const stone =
-      document.createElement("div");
-
-stone.className =
-  value === 1
-    ? "stone black"
-    : "stone white";
-
-// ==========================================
-// 如果目前格子是最新一步棋
-// 加上 lastMove 樣式，顯示藍色外環
-// ==========================================
-if (
-  showLastMoveHighlight &&
-  lastMove &&
-  lastMove.x === x &&
-  lastMove.y === y
-) {
-  stone.classList.add("lastMove");
-}
-
-cell.appendChild(stone);
+    cell.appendChild(stone);
   });
 }
 
 function handleCellClick(x, y) {
-  if (!myColor) {
-    showToast("請先加入配對");
-    return;
-  }
-
-  if (gameStatus !== "playing") {
-    showToast("目前無法落子");
-    return;
-  }
-
-  if (undoPending) {
-    showToast("請先完成悔棋處理");
-    return;
-  }
-
-  if (currentTurn !== myColor) {
-    showToast("請等待對手落子");
-    return;
-  }
-
-  if (currentBoard[getIndex(x, y)] !== 0) {
-    showToast("這個位置已經有棋子");
-    return;
-  }
-
-  socket.emit("makeMove", {
-    x,
-    y
-  });
+  if (!myColor) return showToast("請先加入配對");
+  if (gameStatus !== "playing") return showToast("目前無法落子");
+  if (undoPending) return showToast("請先完成悔棋處理");
+  if (currentTurn !== myColor) return showToast("請等待對手落子");
+  if (currentBoard[getIndex(x, y)] !== 0) return showToast("這個位置已經有棋子");
+  socket.emit("makeMove", { x, y });
 }
 
-// ==========================================
-// 狀態文字與按鈕
-// ==========================================
 function updateTurnText() {
-  if (gameStatus === "finished") {
-    return;
-  }
-
-  if (undoPending) {
-    statusText.textContent =
-      "等待悔棋處理";
-    return;
-  }
-
-  if (currentTurn === myColor) {
-    statusText.textContent =
-      "輪到您落子";
-  } else {
-    statusText.textContent =
-      "等待對手落子";
-  }
+  if (gameStatus === "finished") return;
+  if (undoPending) return void (statusText.textContent = "等待悔棋處理");
+  statusText.textContent = currentTurn === myColor ? "輪到您落子" : "等待對手落子";
 }
 
 function updateUndoButton() {
-  const canRequestUndo =
-    gameStatus === "playing" &&
-    myColor &&
-    lastMoveColor === myColor &&
-    !undoPending;
-
-  undoButton.disabled = !canRequestUndo;
-
-  if (undoPending) {
-    undoButton.textContent =
-      "等待悔棋處理...";
-  } else {
-    undoButton.textContent =
-      "申請悔棋";
-  }
+  undoButton.disabled = !(gameStatus === "playing" && myColor && lastMoveColor === myColor && !undoPending);
+  undoButton.textContent = undoPending ? "等待悔棋處理..." : "申請悔棋";
 }
 
-// ==========================================
-// 聊天室
-// ==========================================
 function resetChat() {
-  chatMessages.innerHTML = `
-    <p class="emptyText">
-      配對成功後即可聊天
-    </p>
-  `;
-
+  chatMessages.innerHTML = '<p class="emptyText">配對成功後即可聊天</p>';
   chatInput.value = "";
   chatInput.disabled = true;
   sendChatButton.disabled = true;
@@ -506,1028 +184,329 @@ function enableChat() {
   sendChatButton.disabled = false;
 }
 
-function clearEmptyChatText() {
-  const emptyText =
-    chatMessages.querySelector(".emptyText");
-
-  if (emptyText) {
-    emptyText.remove();
-  }
-}
-
 function appendChatMessage(data) {
-  clearEmptyChatText();
-
+  chatMessages.querySelector(".emptyText")?.remove();
   if (data.type === "system") {
-    const item =
-      document.createElement("p");
-
-    item.className =
-      "chatSystemMessage";
-
-    item.textContent =
-      data.message;
-
+    const item = document.createElement("p");
+    item.className = "chatSystemMessage";
+    item.textContent = data.message;
     chatMessages.appendChild(item);
   } else {
-    const item =
-      document.createElement("div");
-
-    item.className =
-      "chatMessage";
-
-    const name =
-      document.createElement("div");
-
-    name.className =
-      "chatMessageName";
-
-    name.textContent =
-      data.playerName;
-
-    const text =
-      document.createElement("div");
-
-    text.className =
-      "chatMessageText";
-
-    text.textContent =
-      data.message;
-
-    item.appendChild(name);
-    item.appendChild(text);
-
+    const item = document.createElement("div");
+    item.className = "chatMessage";
+    const name = document.createElement("div");
+    name.className = "chatMessageName";
+    name.textContent = data.playerName;
+    const text = document.createElement("div");
+    text.className = "chatMessageText";
+    text.textContent = data.message;
+    item.append(name, text);
     chatMessages.appendChild(item);
   }
-
-  chatMessages.scrollTop =
-    chatMessages.scrollHeight;
-}
-// ==========================================
-// 新增：清除公開聊天室預設文字
-// ==========================================
-function clearEmptyGlobalChatText() {
-  const emptyText =
-    globalChatMessages.querySelector(
-      ".emptyText"
-    );
-
-  if (emptyText) {
-    emptyText.remove();
-  }
+  chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-// ==========================================
-// 新增：顯示一則公開聊天室訊息
-// ==========================================
 function appendGlobalChatMessage(data) {
-  clearEmptyGlobalChatText();
-
-  const item =
-    document.createElement("div");
-
-  item.className =
-    "chatMessage";
-
-  const name =
-    document.createElement("div");
-
-  name.className =
-    "chatMessageName";
-
-  name.textContent =
-    data.playerName;
-
-  const text =
-    document.createElement("div");
-
-  text.className =
-    "chatMessageText";
-
-  text.textContent =
-    data.message;
-
-  item.appendChild(name);
-  item.appendChild(text);
-
+  if (data.id && seenGlobalMessageIds.has(data.id)) return;
+  if (data.id) seenGlobalMessageIds.add(data.id);
+  globalChatMessages.querySelector(".emptyText")?.remove();
+  const item = document.createElement("div");
+  item.className = "chatMessage";
+  const name = document.createElement("div");
+  name.className = "chatMessageName";
+  name.textContent = data.playerName;
+  const text = document.createElement("div");
+  text.className = "chatMessageText";
+  text.textContent = data.message;
+  item.append(name, text);
   globalChatMessages.appendChild(item);
-
-  globalChatMessages.scrollTop =
-    globalChatMessages.scrollHeight;
+  globalChatMessages.scrollTop = globalChatMessages.scrollHeight;
 }
 
-// ==========================================
-// 新增：送出公開聊天室訊息
-// ==========================================
-globalChatForm.addEventListener(
-  "submit",
-  (event) => {
-    event.preventDefault();
-
-    const playerName =
-      playerNameInput.value.trim();
-
-    const message =
-      globalChatInput.value.trim();
-
-    if (!playerName) {
-      showToast(
-        "請先在左側輸入玩家名稱"
-      );
-
-      playerNameInput.focus();
-
-      return;
-    }
-
-    if (!message) {
-      return;
-    }
-
-    socket.emit(
-      "sendGlobalChatMessage",
-      {
-        name:
-          playerName,
-
-        message
-      }
-    );
-
-    globalChatInput.value = "";
-
-    globalChatInput.focus();
-  }
-);
-chatForm.addEventListener(
-  "submit",
-  (event) => {
-    event.preventDefault();
-
-    const message =
-      chatInput.value.trim();
-
-    if (!message) {
-      return;
-    }
-
-    socket.emit("sendChatMessage", {
-      message
-    });
-
-    chatInput.value = "";
-    chatInput.focus();
-  }
-);
-
-// ==========================================
-// 排行榜
-// ==========================================
 function renderLeaderboard(players) {
   rankingList.innerHTML = "";
-
-  if (!players || players.length === 0) {
-    rankingList.innerHTML = `
-      <p class="emptyText">
-        尚無排行榜資料
-      </p>
-    `;
-
+  if (!players?.length) {
+    rankingList.innerHTML = '<p class="emptyText">尚無排行榜資料</p>';
     return;
   }
-
   players.forEach((player, index) => {
-    const item =
-      document.createElement("div");
-
-    item.className =
-      "rankingItem";
-
-    const rankingIndex =
-      document.createElement("div");
-
-    rankingIndex.className =
-      index === 0
-        ? "rankingIndex topOne"
-        : "rankingIndex";
-
-    rankingIndex.textContent =
-      index + 1;
-
-    const name =
-      document.createElement("div");
-
-    name.className =
-      "rankingName";
-
-    name.textContent =
-      player.displayName;
-
-    const score =
-      document.createElement("div");
-
-    score.className =
-      "rankingScore";
-
-    score.textContent =
-      `${player.points} 分`;
-
-    item.appendChild(rankingIndex);
-    item.appendChild(name);
-    item.appendChild(score);
-
+    const item = document.createElement("div");
+    item.className = "rankingItem";
+    const rank = document.createElement("div");
+    rank.className = index === 0 ? "rankingIndex topOne" : "rankingIndex";
+    rank.textContent = index + 1;
+    const name = document.createElement("div");
+    name.className = "rankingName";
+    name.textContent = player.displayName;
+    const score = document.createElement("div");
+    score.className = "rankingScore";
+    score.textContent = `${player.points} 分`;
+    item.append(rank, name, score);
     rankingList.appendChild(item);
   });
 }
 
-refreshRankingButton.addEventListener(
-  "click",
-  () => {
-    socket.emit("getLeaderboard");
-    socket.emit("getGlobalChatHistory");
-  }
-);
-
-// ==========================================
-// 結果視窗
-// ==========================================
 function hideResultModal() {
   resultModal.classList.add("hidden");
-
-  resultModalCard.classList.remove(
-    "victory",
-    "defeat",
-    "draw",
-    "unavailable"
-  );
-
+  resultModalCard.classList.remove("victory", "defeat", "draw", "unavailable");
   rematchButton.disabled = false;
-
-  rematchButton.textContent =
-    "與同對手繼續";
-
-  rematchHint.textContent =
-    "可以返回首頁，或邀請同一位玩家再來一局。";
+  rematchButton.textContent = "與同對手繼續";
+  rematchHint.textContent = "可以返回首頁，或邀請同一位玩家再來一局。";
 }
 
-function showResultModal(type) {
+function showResultModal(type, customMessage = "") {
   hideResultModal();
-
   resultModal.classList.remove("hidden");
-
   resultModalCard.classList.add(type);
+  resultBadge.textContent = type === "unavailable" ? "CONNECTION ENDED" : "GAME OVER";
 
-  resultBadge.textContent =
-    "GAME OVER";
+  const content = {
+    victory: ["🏆", "恭喜獲勝！", "您成功完成五子連線，贏得本場對戰。"],
+    defeat: ["😢", "本局失敗", "對手已完成五子連線，再接再厲。"],
+    draw: ["🤝", "本局平手", "棋盤已滿，雙方未分出勝負。"],
+    unavailable: ["🔌", "遊戲連線已失效", customMessage || "對手已離線或伺服器曾重新啟動，請返回首頁重新配對。"]
+  }[type];
 
-  if (type === "victory") {
-    resultIcon.textContent = "🏆";
-
-    resultTitle.textContent =
-      "恭喜獲勝！";
-
-    resultMessage.textContent =
-      "您成功完成五子連線，贏得本場對戰。";
-
-    return;
-  }
-
-  if (type === "defeat") {
-    resultIcon.textContent = "😢";
-
-    resultTitle.textContent =
-      "本局失敗";
-
-    resultMessage.textContent =
-      "對手已完成五子連線，再接再厲。";
-
-    return;
-  }
-
-  if (type === "draw") {
-    resultIcon.textContent = "🤝";
-
-    resultTitle.textContent =
-      "本局平手";
-
-    resultMessage.textContent =
-      "棋盤已滿，雙方未分出勝負。";
-
-    return;
-  }
-
+  [resultIcon.textContent, resultTitle.textContent, resultMessage.textContent] = content;
   if (type === "unavailable") {
-    resultIcon.textContent = "🔌";
-
-    resultTitle.textContent =
-      "對手已離線";
-
-    resultMessage.textContent =
-      "對手已返回首頁或離開遊戲，無法繼續對戰。";
-
-    resultBadge.textContent =
-      "CONNECTION ENDED";
-
     rematchButton.disabled = true;
-
-    rematchButton.textContent =
-      "無法繼續";
+    rematchButton.textContent = "無法繼續";
   }
 }
 
-// ==========================================
-// 回首頁
-// ==========================================
-function resetToHome() {
-  roomChatCard.classList.add(
-  "hidden"
-);
+function saveCurrentRoom(roomId) {
+  currentRoomId = roomId;
+  sessionStorage.setItem("gomokuCurrentRoomId", roomId);
+}
 
-resetPrivateRoomLobby();
+function resetToHome() {
+  currentRoomId = null;
+  sessionStorage.removeItem("gomokuCurrentRoomId");
   myColor = null;
   currentTurn = null;
   gameStatus = "waiting";
-
-lastMoveColor = null;
-lastMove = null;
-undoPending = false;
-
-  currentBoard =
-    Array(BOARD_SIZE * BOARD_SIZE).fill(0);
-
+  currentBoard = Array(BOARD_SIZE * BOARD_SIZE).fill(0);
+  lastMoveColor = null;
+  lastMove = null;
+  undoPending = false;
   loginSection.classList.remove("hidden");
   gameInfo.classList.add("hidden");
-
-  roomIdText.textContent =
-    "尚未配對";
-
-  myColorText.textContent =
-    "尚未分配";
-
-  statusText.textContent =
-    "等待中";
-
-  blackPlayerText.textContent =
-    "等待玩家";
-
-  whitePlayerText.textContent =
-    "等待玩家";
-
-  joinButton.disabled = false;
-
-  joinButton.textContent =
-    "開始配對";
-
+  roomChatCard.classList.add("hidden");
+  roomIdText.textContent = "尚未配對";
+  myColorText.textContent = "尚未分配";
+  statusText.textContent = "等待中";
+  blackPlayerText.textContent = "等待玩家";
+  whitePlayerText.textContent = "等待玩家";
   undoRequestBox.classList.add("hidden");
-
-  updateUndoButton();
+  resetPrivateRoomLobby();
   resetChat();
   hideResultModal();
+  updateUndoButton();
   renderBoard();
 }
 
-// ==========================================
-// 按鈕事件
-// ==========================================
-joinButton.addEventListener(
-  "click",
-  () => {
-    const name =
-      playerNameInput.value.trim();
+joinButton.addEventListener("click", () => {
+  const name = playerNameInput.value.trim();
+  if (!name) return showToast("請先輸入玩家名稱");
+  setLobbyControlsDisabled(true);
+  joinButton.textContent = "等待配對中...";
+  socket.emit("joinQueue", { name, playerToken });
+});
 
-    if (!name) {
-      showToast("請先輸入玩家名稱");
-      return;
-    }
+createPrivateRoomButton.addEventListener("click", () => {
+  const name = playerNameInput.value.trim();
+  if (!name) return showToast("請先輸入玩家名稱");
+  setLobbyControlsDisabled(true);
+  socket.emit("createPrivateRoom", { name, playerToken });
+});
 
-    joinButton.disabled = true;
+joinPrivateRoomButton.addEventListener("click", () => {
+  const name = playerNameInput.value.trim();
+  const roomCode = privateRoomCodeInput.value.trim();
+  if (!name) return showToast("請先輸入玩家名稱");
+  if (!/^\d{4}$/.test(roomCode)) return showToast("請輸入正確的 4 位數房號");
+  setLobbyControlsDisabled(true);
+  socket.emit("joinPrivateRoom", { name, roomCode, playerToken });
+});
 
-    joinButton.textContent =
-      "等待配對中...";
-setLobbyControlsDisabled(true);
-    socket.emit("joinQueue", {
-      name
-    });
-  }
-);
+cancelPrivateRoomButton.addEventListener("click", () => socket.emit("cancelPrivateRoom"));
+privateRoomCodeInput.addEventListener("input", () => {
+  privateRoomCodeInput.value = privateRoomCodeInput.value.replace(/\D/g, "").slice(0, 4);
+});
 
-homeButton.addEventListener(
-  "click",
-  () => {
-    socket.emit("leaveRoom");
+homeButton.addEventListener("click", () => {
+  socket.emit("leaveRoom");
+  resetToHome();
+  showToast("已返回首頁");
+});
 
-    resetToHome();
+rematchButton.addEventListener("click", () => {
+  rematchButton.disabled = true;
+  rematchButton.textContent = "已送出邀請，等待對手...";
+  rematchHint.textContent = "已同意再來一局，等待對手確認。";
+  socket.emit("requestRematch");
+});
 
-    showToast("已返回首頁");
-  }
-);
+undoButton.addEventListener("click", () => socket.emit("requestUndo"));
+acceptUndoButton.addEventListener("click", () => socket.emit("respondUndo", { accept: true }));
+rejectUndoButton.addEventListener("click", () => socket.emit("respondUndo", { accept: false }));
 
-rematchButton.addEventListener(
-  "click",
-  () => {
-    rematchButton.disabled = true;
+lastMoveToggleButton.addEventListener("click", () => {
+  showLastMoveHighlight = !showLastMoveHighlight;
+  localStorage.setItem("gomokuShowLastMoveHighlight", String(showLastMoveHighlight));
+  updateLastMoveToggleButton();
+  renderBoard();
+});
 
-    rematchButton.textContent =
-      "已送出邀請，等待對手...";
+globalChatForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const name = playerNameInput.value.trim();
+  const message = globalChatInput.value.trim();
+  if (!name) return showToast("請先在左側輸入玩家名稱");
+  if (!message) return;
+  socket.emit("sendGlobalChatMessage", { name, message });
+  globalChatInput.value = "";
+});
 
-    rematchHint.textContent =
-      "已同意再來一局，等待對手確認。";
+chatForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const message = chatInput.value.trim();
+  if (!message) return;
+  socket.emit("sendChatMessage", { message });
+  chatInput.value = "";
+});
 
-    socket.emit("requestRematch");
-  }
-);
+refreshRankingButton.addEventListener("click", () => socket.emit("getLeaderboard"));
 
-undoButton.addEventListener(
-  "click",
-  () => {
-    socket.emit("requestUndo");
-  }
-);
-
-acceptUndoButton.addEventListener(
-  "click",
-  () => {
-    socket.emit("respondUndo", {
-      accept: true
-    });
-
-    undoRequestBox.classList.add("hidden");
-  }
-);
-
-rejectUndoButton.addEventListener(
-  "click",
-  () => {
-    socket.emit("respondUndo", {
-      accept: false
-    });
-
-    undoRequestBox.classList.add("hidden");
-  }
-);
-// ==========================================
-// 切換最新一步棋外環
-// ==========================================
-lastMoveToggleButton.addEventListener(
-  "click",
-  () => {
-    showLastMoveHighlight =
-      !showLastMoveHighlight;
-
-    localStorage.setItem(
-      "gomokuShowLastMoveHighlight",
-      String(showLastMoveHighlight)
-    );
-
-    updateLastMoveToggleButton();
-
-    // 立即重新繪製棋盤
-    // 不需要等待下一位玩家落子
-    renderBoard();
-
-    showToast(
-      showLastMoveHighlight
-        ? "已開啟最後一步棋提示"
-        : "已關閉最後一步棋提示"
-    );
-  }
-);
-// ==========================================
-// 建立私人房間
-// ==========================================
-createPrivateRoomButton.addEventListener(
-  "click",
-  () => {
-    const name =
-      playerNameInput.value.trim();
-
-    if (!name) {
-      showToast(
-        "請先輸入玩家名稱"
-      );
-
-      playerNameInput.focus();
-
-      return;
-    }
-
-    setLobbyControlsDisabled(true);
-
-    socket.emit(
-      "createPrivateRoom",
-      {
-        name
-      }
-    );
-  }
-);
-
-// ==========================================
-// 輸入房號加入私人房間
-// ==========================================
-joinPrivateRoomButton.addEventListener(
-  "click",
-  () => {
-    const name =
-      playerNameInput.value.trim();
-
-    const roomCode =
-      privateRoomCodeInput
-        .value
-        .trim();
-
-    if (!name) {
-      showToast(
-        "請先輸入玩家名稱"
-      );
-
-      playerNameInput.focus();
-
-      return;
-    }
-
-    if (
-      !/^\d{4}$/.test(roomCode)
-    ) {
-      showToast(
-        "請輸入正確的 4 位數房號"
-      );
-
-      privateRoomCodeInput.focus();
-
-      return;
-    }
-
-    setLobbyControlsDisabled(true);
-
-    socket.emit(
-      "joinPrivateRoom",
-      {
-        name,
-        roomCode
-      }
-    );
-  }
-);
-
-// ==========================================
-// 取消私人房間等待
-// ==========================================
-cancelPrivateRoomButton.addEventListener(
-  "click",
-  () => {
-    socket.emit(
-      "cancelPrivateRoom"
-    );
-  }
-);
-privateRoomCodeInput.addEventListener(
-  "input",
-  () => {
-    privateRoomCodeInput.value =
-      privateRoomCodeInput.value
-        .replace(/\D/g, "")
-        .slice(0, 4);
-  }
-);
-// ==========================================
-// Socket.IO 基本連線
-// ==========================================
 socket.on("connect", () => {
-  connectionDot.classList.add(
-    "online"
-  );
-
-  connectionText.textContent =
-    "伺服器連線正常";
-
+  connectionDot.classList.add("online");
+  connectionText.textContent = "伺服器連線正常";
   startHeartbeat();
-
-  // 第一次開啟頁面不需要顯示恢復提示
-  if (hadConnectedOnce) {
-    if (socket.recovered) {
-      showToast(
-        "連線已恢復，可以繼續遊戲"
-      );
-    } else if (
-      myColor &&
-      gameStatus === "playing"
-    ) {
-      // 若無法恢復舊房間，避免玩家停留在失效棋盤
-      gameStatus = "finished";
-
-      statusText.textContent =
-        "連線已中斷，請重新配對";
-
-      showResultModal(
-        "unavailable"
-      );
-
-      resultTitle.textContent =
-        "遊戲連線已失效";
-
-      resultMessage.textContent =
-        "伺服器曾重新啟動或連線中斷過久，請返回首頁重新配對。";
-    }
-  }
-
-  hadConnectedOnce = true;
-
-  socket.emit(
-    "getLeaderboard"
-  );
+  socket.emit("getLeaderboard");
+  socket.emit("getGlobalChatHistory");
+  if (currentRoomId) socket.emit("resumeGame", { roomId: currentRoomId, playerToken });
 });
 
-socket.on(
-  "disconnect",
-  (reason) => {
-    stopHeartbeat();
-
-    connectionDot.classList.remove(
-      "online"
-    );
-
-    connectionText.textContent =
-      "伺服器連線中斷，正在重新連線...";
-
-    if (
-      myColor &&
-      gameStatus === "playing"
-    ) {
-      statusText.textContent =
-        "連線暫時中斷，請稍候";
-
-      showToast(
-        "連線暫時中斷，系統正在嘗試恢復"
-      );
-    }
-
-    console.log(
-      "Socket.IO disconnected:",
-      reason
-    );
-  }
-);
-// ==========================================
-// 私人房間建立成功
-// ==========================================
-socket.on(
-  "privateRoomCreated",
-  (data) => {
-    privateRoomWaitingBox.classList.remove(
-      "hidden"
-    );
-
-    createdRoomCodeText.textContent =
-      data.roomCode;
-
-    privateRoomStatusText.textContent =
-      "私人房間已建立，等待朋友加入。";
-
-    showToast(
-      `私人房間 ${data.roomCode} 已建立`
-    );
-  }
-);
-
-// ==========================================
-// 私人房間等待已取消
-// ==========================================
-socket.on(
-  "privateRoomCancelled",
-  () => {
-    resetPrivateRoomLobby();
-
-    showToast(
-      "已取消私人房間"
-    );
-  }
-);
-
-// ==========================================
-// 私人房間錯誤
-// ==========================================
-socket.on(
-  "privateRoomError",
-  (message) => {
-    resetPrivateRoomLobby();
-
-    showToast(message);
-  }
-);
-
-// ==========================================
-// 配對與遊戲狀態
-// ==========================================
-socket.on("queueStatus", (data) => {
-  showToast(data.message);
+socket.on("disconnect", () => {
+  stopHeartbeat();
+  connectionDot.classList.remove("online");
+  connectionText.textContent = "伺服器連線中斷，正在重新連線...";
+  if (myColor && gameStatus === "playing") statusText.textContent = "連線暫時中斷，請稍候";
 });
 
-socket.on("gameStarted", (data) => {
+socket.on("privateRoomCreated", ({ roomCode }) => {
+  privateRoomWaitingBox.classList.remove("hidden");
+  createdRoomCodeText.textContent = roomCode;
+  privateRoomStatusText.textContent = "私人房間已建立，等待朋友加入。";
+});
+socket.on("privateRoomCancelled", () => resetPrivateRoomLobby());
+socket.on("privateRoomError", (message) => {
+  resetPrivateRoomLobby();
+  showToast(message);
+});
+socket.on("queueStatus", ({ message }) => showToast(message));
 
+function enterGame(data) {
   myColor = data.myColor;
-
+  saveCurrentRoom(data.roomId);
   loginSection.classList.add("hidden");
   gameInfo.classList.remove("hidden");
-  roomChatCard.classList.remove(
-  "hidden"
-);
-
-resetChat();
-enableChat();
-
-  roomIdText.textContent =
-    data.roomId;
-
-  myColorText.textContent =
-    myColor === "black"
-      ? "黑棋"
-      : "白棋";
-
-  hideResultModal();
+  roomChatCard.classList.remove("hidden");
+  roomIdText.textContent = data.roomId;
+  myColorText.textContent = myColor === "black" ? "黑棋" : "白棋";
   enableChat();
+  hideResultModal();
+}
 
+socket.on("gameStarted", (data) => {
+  enterGame(data);
+  resetChat();
+  enableChat();
   showToast("配對成功，遊戲開始");
+});
+
+socket.on("gameResumed", (data) => {
+  enterGame(data);
+  gameStatus = data.status;
+  showToast("連線已恢復，可以繼續遊戲");
+});
+
+socket.on("resumeGameFailed", (message) => {
+  if (!currentRoomId) return;
+  sessionStorage.removeItem("gomokuCurrentRoomId");
+  currentRoomId = null;
+  gameStatus = "finished";
+  showResultModal("unavailable", message);
 });
 
 socket.on("gameState", (data) => {
   currentBoard = data.board;
   currentTurn = data.currentTurn;
   gameStatus = data.status;
-
-lastMoveColor =
-  data.lastMoveColor;
-
-// ==========================================
-// 新增：保存最新一步棋的 x、y、color
-// ==========================================
-lastMove =
-  data.lastMove || null;
-
-undoPending =
-  data.undoPending;
-
-  roomIdText.textContent =
-    data.roomId;
-
-  const blackPlayer =
-    data.players.find(
-      (player) =>
-        player.color === "black"
-    );
-
-  const whitePlayer =
-    data.players.find(
-      (player) =>
-        player.color === "white"
-    );
-
-  blackPlayerText.textContent =
-    blackPlayer?.name ||
-    "等待玩家";
-
-  whitePlayerText.textContent =
-    whitePlayer?.name ||
-    "等待玩家";
-
+  lastMoveColor = data.lastMoveColor;
+  lastMove = data.lastMove || null;
+  undoPending = data.undoPending;
+  roomIdText.textContent = data.roomId;
+  blackPlayerText.textContent = data.players.find((player) => player.color === "black")?.name || "等待玩家";
+  whitePlayerText.textContent = data.players.find((player) => player.color === "white")?.name || "等待玩家";
   renderBoard();
   updateTurnText();
   updateUndoButton();
 });
 
-// ==========================================
-// 遊戲結束
-// ==========================================
 socket.on("gameOver", (data) => {
   gameStatus = "finished";
-
   updateUndoButton();
-
-  if (data.winner === "draw") {
-    statusText.textContent =
-      "本局平手";
-
-    showResultModal("draw");
-    return;
-  }
-
-  if (data.winner === myColor) {
-    statusText.textContent =
-      "您獲勝了！";
-
-    showResultModal("victory");
-  } else {
-    statusText.textContent =
-      "對手獲勝";
-
-    showResultModal("defeat");
-  }
+  if (data.winner === "draw") return showResultModal("draw");
+  showResultModal(data.winner === myColor ? "victory" : "defeat");
 });
 
-// ==========================================
-// 再戰
-// ==========================================
-socket.on("rematchStatus", (data) => {
-  rematchHint.textContent =
-    `${data.accepted} / ${data.total} 位玩家已同意再來一局`;
-
-  if (data.accepted < data.total) {
-    showToast("等待對手確認再來一局");
-  }
+socket.on("rematchStatus", ({ accepted, total }) => {
+  rematchHint.textContent = `${accepted} / ${total} 位玩家已同意再來一局`;
 });
 
-socket.on("rematchStarted", (data) => {
-  roomChatCard.classList.remove(
-  "hidden"
-);
-  myColor = data.myColor;
-  currentTurn = "black";
-  gameStatus = "playing";
-
-lastMoveColor = null;
-lastMove = null;
-undoPending = false;
-
-  currentBoard =
-    Array(BOARD_SIZE * BOARD_SIZE).fill(0);
-
-  roomIdText.textContent =
-    data.roomId;
-
-  myColorText.textContent =
-    myColor === "black"
-      ? "黑棋"
-      : "白棋";
-
-  hideResultModal();
-
-  undoRequestBox.classList.add("hidden");
-
-  renderBoard();
-  updateUndoButton();
-
-  showToast("雙方已同意，下一局開始！");
-});
-
-// ==========================================
-// 悔棋
-// ==========================================
+socket.on("rematchStartedNotice", () => showToast("雙方已同意，下一局開始！"));
 socket.on("undoStatus", (data) => {
-  undoPending =
-    data.status === "pending";
-
+  undoPending = data.status === "pending";
   updateTurnText();
   updateUndoButton();
-
-  if (data.status === "pending") {
-    showToast(
-      `${data.requesterName} 已提出悔棋申請`
-    );
-  }
 });
-
-socket.on(
-  "undoRequestReceived",
-  (data) => {
-    undoRequestText.textContent =
-      `${data.requesterName} 希望撤回最後一步，是否同意？`;
-
-    undoRequestBox.classList.remove("hidden");
-  }
-);
-
-socket.on("undoResolved", (data) => {
+socket.on("undoRequestReceived", ({ requesterName }) => {
+  undoRequestText.textContent = `${requesterName} 希望撤回最後一步，是否同意？`;
+  undoRequestBox.classList.remove("hidden");
+});
+socket.on("undoResolved", ({ accepted }) => {
   undoPending = false;
-
   undoRequestBox.classList.add("hidden");
-
   updateTurnText();
   updateUndoButton();
-
-  if (data.accepted) {
-    showToast("對手已同意悔棋");
-  } else {
-    showToast("對手拒絕悔棋");
-  }
+  showToast(accepted ? "對手已同意悔棋" : "對手拒絕悔棋");
 });
-
-// ==========================================
-// 聊天室
-// ==========================================
-socket.on("chatMessage", (data) => {
-  appendChatMessage(data);
-});
-
+socket.on("chatMessage", appendChatMessage);
 socket.on("chatHistory", (messages) => {
   chatMessages.innerHTML = "";
-
-  if (!messages || messages.length === 0) {
-    chatMessages.innerHTML = `
-      <p class="emptyText">
-        尚無聊天訊息
-      </p>
-    `;
-
-    return;
-  }
-
-  messages.forEach((message) => {
-    appendChatMessage(message);
-  });
+  if (!messages?.length) return void (chatMessages.innerHTML = '<p class="emptyText">尚無聊天訊息</p>');
+  messages.forEach(appendChatMessage);
 });
-// ==========================================
-// 新增：接收一則公開聊天室訊息
-// ==========================================
-socket.on(
-  "globalChatMessage",
-  (data) => {
-    appendGlobalChatMessage(data);
-  }
-);
-
-// ==========================================
-// 新增：載入公開聊天室歷史訊息
-// ==========================================
-socket.on(
-  "globalChatHistory",
-  (messages) => {
-    globalChatMessages.innerHTML = "";
-
-    if (
-      !messages ||
-      messages.length === 0
-    ) {
-      globalChatMessages.innerHTML = `
-        <p class="emptyText">
-          尚無公開訊息
-        </p>
-      `;
-
-      return;
-    }
-
-    messages.forEach((message) => {
-      appendGlobalChatMessage(message);
-    });
-  }
-);
-// ==========================================
-// 排行榜
-// ==========================================
-socket.on(
-  "leaderboardUpdated",
-  (players) => {
-    renderLeaderboard(players);
-  }
-);
-
-// ==========================================
-// 對手離線
-// ==========================================
-socket.on(
-  "opponentDisconnected",
-  () => {
-    gameStatus = "finished";
-
-    statusText.textContent =
-      "對手已離線，遊戲結束";
-
-    updateUndoButton();
-
-    showResultModal("unavailable");
-  }
-);
-
-socket.on(
-  "rematchUnavailable",
-  (data) => {
-    gameStatus = "finished";
-
-    statusText.textContent =
-      data?.message ||
-      "對手已離線，無法繼續對戰";
-
-    showResultModal("unavailable");
-  }
-);
-
-// ==========================================
-// 錯誤訊息
-// ==========================================
-socket.on("errorMessage", (message) => {
-  showToast(message);
+socket.on("globalChatMessage", appendGlobalChatMessage);
+socket.on("globalChatHistory", (messages) => {
+  globalChatMessages.innerHTML = "";
+  seenGlobalMessageIds.clear();
+  if (!messages?.length) return void (globalChatMessages.innerHTML = '<p class="emptyText">尚無公開訊息</p>');
+  messages.forEach(appendGlobalChatMessage);
 });
+socket.on("leaderboardUpdated", renderLeaderboard);
+socket.on("opponentDisconnected", (data) => {
+  gameStatus = "finished";
+  showResultModal("unavailable", data?.message);
+});
+socket.on("rematchUnavailable", (data) => showResultModal("unavailable", data?.message));
+socket.on("errorMessage", showToast);
 
-// ==========================================
-// 初始化
-// ==========================================
 createBoard();
 resetChat();
 hideResultModal();
 updateUndoButton();
-roomChatCard.classList.add(
-  "hidden"
-);
-
+roomChatCard.classList.add("hidden");
 resetPrivateRoomLobby();
 updateLastMoveToggleButton();
