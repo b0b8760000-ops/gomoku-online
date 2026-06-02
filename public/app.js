@@ -26,6 +26,11 @@ let currentBoard =
 let lastMoveColor = null;
 let undoPending = false;
 // ==========================================
+// 最新一步棋座標
+// 用於在棋盤上顯示藍色外環
+// ==========================================
+let lastMove = null;
+// ==========================================
 // Socket.IO 心跳與重新連線狀態
 // ==========================================
 let heartbeatTimer = null;
@@ -136,6 +141,21 @@ const sendChatButton =
   document.getElementById("sendChatButton");
 
 // ==========================================
+// 新增：公開聊天室
+// ==========================================
+const globalChatMessages =
+  document.getElementById("globalChatMessages");
+
+const globalChatForm =
+  document.getElementById("globalChatForm");
+
+const globalChatInput =
+  document.getElementById("globalChatInput");
+
+const globalSendChatButton =
+  document.getElementById("globalSendChatButton");
+
+// ==========================================
 // 排行榜
 // ==========================================
 const rankingList =
@@ -239,12 +259,24 @@ function renderBoard() {
     const stone =
       document.createElement("div");
 
-    stone.className =
-      value === 1
-        ? "stone black"
-        : "stone white";
+stone.className =
+  value === 1
+    ? "stone black"
+    : "stone white";
 
-    cell.appendChild(stone);
+// ==========================================
+// 如果目前格子是最新一步棋
+// 加上 lastMove 樣式，顯示藍色外環
+// ==========================================
+if (
+  lastMove &&
+  lastMove.x === x &&
+  lastMove.y === y
+) {
+  stone.classList.add("lastMove");
+}
+
+cell.appendChild(stone);
   });
 }
 
@@ -398,7 +430,102 @@ function appendChatMessage(data) {
   chatMessages.scrollTop =
     chatMessages.scrollHeight;
 }
+// ==========================================
+// 新增：清除公開聊天室預設文字
+// ==========================================
+function clearEmptyGlobalChatText() {
+  const emptyText =
+    globalChatMessages.querySelector(
+      ".emptyText"
+    );
 
+  if (emptyText) {
+    emptyText.remove();
+  }
+}
+
+// ==========================================
+// 新增：顯示一則公開聊天室訊息
+// ==========================================
+function appendGlobalChatMessage(data) {
+  clearEmptyGlobalChatText();
+
+  const item =
+    document.createElement("div");
+
+  item.className =
+    "chatMessage";
+
+  const name =
+    document.createElement("div");
+
+  name.className =
+    "chatMessageName";
+
+  name.textContent =
+    data.playerName;
+
+  const text =
+    document.createElement("div");
+
+  text.className =
+    "chatMessageText";
+
+  text.textContent =
+    data.message;
+
+  item.appendChild(name);
+  item.appendChild(text);
+
+  globalChatMessages.appendChild(item);
+
+  globalChatMessages.scrollTop =
+    globalChatMessages.scrollHeight;
+}
+
+// ==========================================
+// 新增：送出公開聊天室訊息
+// ==========================================
+globalChatForm.addEventListener(
+  "submit",
+  (event) => {
+    event.preventDefault();
+
+    const playerName =
+      playerNameInput.value.trim();
+
+    const message =
+      globalChatInput.value.trim();
+
+    if (!playerName) {
+      showToast(
+        "請先在左側輸入玩家名稱"
+      );
+
+      playerNameInput.focus();
+
+      return;
+    }
+
+    if (!message) {
+      return;
+    }
+
+    socket.emit(
+      "sendGlobalChatMessage",
+      {
+        name:
+          playerName,
+
+        message
+      }
+    );
+
+    globalChatInput.value = "";
+
+    globalChatInput.focus();
+  }
+);
 chatForm.addEventListener(
   "submit",
   (event) => {
@@ -484,6 +611,7 @@ refreshRankingButton.addEventListener(
   "click",
   () => {
     socket.emit("getLeaderboard");
+    socket.emit("getGlobalChatHistory");
   }
 );
 
@@ -582,8 +710,9 @@ function resetToHome() {
   currentTurn = null;
   gameStatus = "waiting";
 
-  lastMoveColor = null;
-  undoPending = false;
+lastMoveColor = null;
+lastMove = null;
+undoPending = false;
 
   currentBoard =
     Array(BOARD_SIZE * BOARD_SIZE).fill(0);
@@ -810,11 +939,17 @@ socket.on("gameState", (data) => {
   currentTurn = data.currentTurn;
   gameStatus = data.status;
 
-  lastMoveColor =
-    data.lastMoveColor;
+lastMoveColor =
+  data.lastMoveColor;
 
-  undoPending =
-    data.undoPending;
+// ==========================================
+// 新增：保存最新一步棋的 x、y、color
+// ==========================================
+lastMove =
+  data.lastMove || null;
+
+undoPending =
+  data.undoPending;
 
   roomIdText.textContent =
     data.roomId;
@@ -890,8 +1025,9 @@ socket.on("rematchStarted", (data) => {
   currentTurn = "black";
   gameStatus = "playing";
 
-  lastMoveColor = null;
-  undoPending = false;
+lastMoveColor = null;
+lastMove = null;
+undoPending = false;
 
   currentBoard =
     Array(BOARD_SIZE * BOARD_SIZE).fill(0);
@@ -980,7 +1116,42 @@ socket.on("chatHistory", (messages) => {
     appendChatMessage(message);
   });
 });
+// ==========================================
+// 新增：接收一則公開聊天室訊息
+// ==========================================
+socket.on(
+  "globalChatMessage",
+  (data) => {
+    appendGlobalChatMessage(data);
+  }
+);
 
+// ==========================================
+// 新增：載入公開聊天室歷史訊息
+// ==========================================
+socket.on(
+  "globalChatHistory",
+  (messages) => {
+    globalChatMessages.innerHTML = "";
+
+    if (
+      !messages ||
+      messages.length === 0
+    ) {
+      globalChatMessages.innerHTML = `
+        <p class="emptyText">
+          尚無公開訊息
+        </p>
+      `;
+
+      return;
+    }
+
+    messages.forEach((message) => {
+      appendGlobalChatMessage(message);
+    });
+  }
+);
 // ==========================================
 // 排行榜
 // ==========================================

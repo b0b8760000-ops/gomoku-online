@@ -189,6 +189,15 @@ const waitingPlayers = [];
 const rooms = new Map();
 
 // ==========================================
+// 新增：公開聊天室暫存訊息
+// 所有在線玩家都可以看見
+//
+// Render 重新部署或重新啟動後會清空。
+// 若未來要永久保存，再寫入 MongoDB。
+// ==========================================
+const globalChatMessages = [];
+
+// ==========================================
 // 通用輔助函式
 // ==========================================
 function generateRoomId() {
@@ -375,13 +384,31 @@ function buildRoomState(room) {
     moveCount:
       room.moves.length,
 
-    lastMoveColor:
-      lastMove
-        ? lastMove.color
-        : null,
+lastMoveColor:
+  lastMove
+    ? lastMove.color
+    : null,
 
-    undoPending:
-      Boolean(room.undoRequest)
+// ==========================================
+// 新增：最新一步棋座標
+// 前端使用這個資料顯示藍色外環
+// ==========================================
+lastMove:
+  lastMove
+    ? {
+        x:
+          lastMove.x,
+
+        y:
+          lastMove.y,
+
+        color:
+          lastMove.color
+      }
+    : null,
+
+undoPending:
+  Boolean(room.undoRequest)
   };
 }
 
@@ -949,6 +976,12 @@ io.on(
 
           return;
         }
+
+        // ======================================
+// 保存名稱，讓公開聊天室可沿用
+// ======================================
+socket.data.displayName =
+  name;
 
         removeFromWaitingQueue(
           socket.id
@@ -1522,6 +1555,106 @@ io.on(
         emitSystemChat(
           roomId,
           `${removedMove.playerName} 的最後一步已撤回。`
+        );
+      }
+    );
+
+        // ======================================
+    // 新增：取得公開聊天室歷史訊息
+    // ======================================
+    socket.on(
+      "getGlobalChatHistory",
+      () => {
+        socket.emit(
+          "globalChatHistory",
+          globalChatMessages
+        );
+      }
+    );
+
+    // ======================================
+    // 新增：公開聊天室
+    // 所有在線玩家都可以看到
+    // ======================================
+    socket.on(
+      "sendGlobalChatMessage",
+      (data) => {
+        const now =
+          Date.now();
+
+        // 避免短時間大量洗版
+        if (
+          now -
+            (socket.data
+              .lastGlobalChatAt || 0) <
+          700
+        ) {
+          socket.emit(
+            "errorMessage",
+            "訊息傳送過快，請稍候再試"
+          );
+
+          return;
+        }
+
+        const playerName =
+          cleanPlayerName(
+            socket.data.displayName ||
+              data?.name
+          );
+
+        const message =
+          cleanChatMessage(
+            data?.message
+          );
+
+        if (!playerName) {
+          socket.emit(
+            "errorMessage",
+            "請先輸入玩家名稱"
+          );
+
+          return;
+        }
+
+        if (!message) {
+          return;
+        }
+
+        socket.data.displayName =
+          playerName;
+
+        socket.data.lastGlobalChatAt =
+          now;
+
+        const chatMessage = {
+          type:
+            "player",
+
+          playerName,
+
+          message,
+
+          createdAt:
+            new Date().toISOString()
+        };
+
+        globalChatMessages.push(
+          chatMessage
+        );
+
+        // 最多保留最近 100 則公開訊息
+        if (
+          globalChatMessages.length >
+          100
+        ) {
+          globalChatMessages.shift();
+        }
+
+        // io.emit 代表傳送給所有在線玩家
+        io.emit(
+          "globalChatMessage",
+          chatMessage
         );
       }
     );

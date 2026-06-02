@@ -253,6 +253,73 @@ button:disabled {
   box-shadow: 0 10px 30px rgba(32, 23, 18, 0.25);
 }
 
+/* ==========================================
+   最新一步棋：藍色外環
+========================================== */
+.stone.lastMove {
+  outline: 3px solid #2f80ed;
+  outline-offset: 2px;
+
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.9),
+    0 0 16px rgba(47, 128, 237, 0.8),
+    0 3px 8px rgba(42, 30, 20, 0.35);
+}
+
+/* ==========================================
+   公開聊天室
+========================================== */
+.globalChatCard {
+  border: 1px solid rgba(47, 128, 237, 0.16);
+
+  background:
+    linear-gradient(
+      145deg,
+      rgba(255, 255, 255, 0.94),
+      rgba(239, 246, 255, 0.92)
+    );
+}
+
+.publicBadge {
+  padding: 5px 8px;
+
+  border-radius: 999px;
+
+  background: #e2efff;
+  color: #2464aa;
+
+  font-size: 11px;
+  font-weight: 700;
+
+  white-space: nowrap;
+}
+
+.globalChatMessages {
+  height: 230px;
+
+  border-color: #dceafb;
+
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.globalChatCard .chatMessageText {
+  background: #e5f0ff;
+  color: #35516f;
+}
+
+.globalChatCard .chatMessageName {
+  color: #2f6eb2;
+}
+
+.globalChatHint {
+  margin: 9px 0 0;
+
+  color: #7890a8;
+
+  font-size: 11px;
+  line-height: 1.6;
+}
+
 .hidden {
   display: none;
 }

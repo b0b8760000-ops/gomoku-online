@@ -223,7 +223,7 @@
                 ROOM CHAT
               </p>
 
-              <h2>聊天室</h2>
+              <h2>房間聊天室</h2>
             </div>
           </div>
 
@@ -255,7 +255,54 @@
       </aside>
     </main>
   </div>
+<!-- ================================
+     新增：公開聊天室
+================================= -->
+<section class="sideCard chatCard globalChatCard">
+  <div class="sideCardHeader">
+    <div>
+      <p class="sideCardTag">
+        PUBLIC CHAT
+      </p>
 
+      <h2>公開聊天室</h2>
+    </div>
+
+    <span class="publicBadge">
+      所有人可見
+    </span>
+  </div>
+
+  <div
+    id="globalChatMessages"
+    class="chatMessages globalChatMessages"
+  >
+    <p class="emptyText">
+      尚無公開訊息
+    </p>
+  </div>
+
+  <form id="globalChatForm" class="chatForm">
+    <input
+      id="globalChatInput"
+      type="text"
+      maxlength="120"
+      placeholder="輸入公開訊息..."
+      autocomplete="off"
+    />
+
+    <button
+      id="globalSendChatButton"
+      type="submit"
+    >
+      傳送
+    </button>
+  </form>
+
+  <p class="globalChatHint">
+    公開聊天室中的內容，所有在線玩家都看得到。
+  </p>
+</section>
   <!-- ======================================
        遊戲結果彈出視窗
   ======================================= -->
