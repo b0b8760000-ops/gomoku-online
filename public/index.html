@@ -40,7 +40,7 @@
             id="playerName"
             type="text"
             maxlength="20"
-            placeholder="例如：學良"
+            placeholder="例如：bababoi"
           />
 
           <button id="joinButton">
@@ -83,15 +83,7 @@
               </div>
             </div>
           </div>
-          <div id="rematchSection" class="rematchSection hidden">
-  <button id="rematchButton" class="rematchButton">
-    與同一位玩家再來一局
-  </button>
 
-  <p id="rematchHint" class="rematchHint">
-    等待雙方選擇是否繼續對戰
-  </p>
-</div>
         </div>
       </section>
 
@@ -101,9 +93,60 @@
     </main>
   </div>
 
-  <div id="toast" class="toast hidden"></div>
+<!-- ==========================================
+     遊戲結果彈出視窗
+========================================== -->
+<div
+  id="resultModal"
+  class="modalOverlay hidden"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="resultTitle"
+>
+  <div id="resultModalCard" class="resultModalCard">
+    <div id="resultIcon" class="resultIcon">
+      🏆
+    </div>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="/app.js"></script>
+    <p id="resultBadge" class="resultBadge">
+      GAME OVER
+    </p>
+
+    <h2 id="resultTitle" class="resultTitle">
+      恭喜獲勝！
+    </h2>
+
+    <p id="resultMessage" class="resultMessage">
+      您成功完成五子連線。
+    </p>
+
+    <p id="rematchHint" class="modalHint">
+      可以返回首頁，或邀請同一位玩家再來一局。
+    </p>
+
+    <div class="resultActions">
+      <button
+        id="homeButton"
+        class="homeButton"
+        type="button"
+      >
+        回首頁
+      </button>
+
+      <button
+        id="rematchButton"
+        class="continueButton"
+        type="button"
+      >
+        與同對手繼續
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>

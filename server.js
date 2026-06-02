@@ -606,6 +606,97 @@ io.on("connection", (socket) => {
     }
   });
 
+    // ========================================
+  // 新增：玩家主動返回首頁
+  // ========================================
+  socket.on("leaveRoom", async () => {
+    const roomId = socket.data.roomId;
+
+    if (!roomId) {
+      return;
+    }
+
+    const room = rooms.get(roomId);
+
+    // 先讓返回首頁的玩家離開 Socket.IO 房間
+    socket.leave(roomId);
+    socket.data.roomId = null;
+
+    if (!room) {
+      return;
+    }
+
+    const leavingPlayer = room.players.find(
+      (player) => player.socketId === socket.id
+    );
+
+    const opponent = room.players.find(
+      (player) => player.socketId !== socket.id
+    );
+
+    const opponentSocket = opponent
+      ? io.sockets.sockets.get(opponent.socketId)
+      : null;
+
+    // 讓剩下的對手不再綁定舊房間
+    if (opponentSocket) {
+      opponentSocket.data.roomId = null;
+    }
+
+    // 若遊戲尚未結束，視為主動退出
+    if (
+      room.status === "playing" &&
+      leavingPlayer &&
+      opponent
+    ) {
+      room.status = "finished";
+      room.winner = getOppositeColor(
+        leavingPlayer.color
+      );
+
+      try {
+        await Game.updateOne(
+          {
+            roomId
+          },
+          {
+            $set: {
+              status: room.status,
+              winner: room.winner
+            }
+          }
+        );
+      } catch (error) {
+        console.error(
+          "❌ 更新返回首頁狀態失敗：",
+          error.message
+        );
+      }
+
+      io.to(opponent.socketId).emit(
+        "opponentDisconnected",
+        {
+          winner: room.winner
+        }
+      );
+    } else if (opponent) {
+      // 遊戲已結束後返回首頁
+      // 剩餘玩家不能再與原對手繼續
+      io.to(opponent.socketId).emit(
+        "rematchUnavailable",
+        {
+          message:
+            `${leavingPlayer?.name || "對手"} 已返回首頁，無法再來一局`
+        }
+      );
+    }
+
+    rooms.delete(roomId);
+
+    console.log(
+      `🏠 玩家返回首頁：${leavingPlayer?.name || socket.id}`
+    );
+  });
   // ========================================
   // 玩家離線
   // ========================================

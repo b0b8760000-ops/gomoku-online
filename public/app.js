@@ -5,9 +5,13 @@ const BOARD_SIZE = 15;
 let myColor = null;
 let currentTurn = null;
 let gameStatus = "waiting";
-let currentBoard = Array(225).fill(0);
+let currentBoard = Array(BOARD_SIZE * BOARD_SIZE).fill(0);
 
+// ==========================================
+// 基本畫面元件
+// ==========================================
 const board = document.getElementById("board");
+
 const joinButton = document.getElementById("joinButton");
 const playerNameInput = document.getElementById("playerName");
 
@@ -27,14 +31,23 @@ const connectionText = document.getElementById("connectionText");
 const toast = document.getElementById("toast");
 
 // ==========================================
-// 新增：再來一局元件
+// 遊戲結果彈出視窗元件
 // ==========================================
-const rematchSection = document.getElementById("rematchSection");
-const rematchButton = document.getElementById("rematchButton");
+const resultModal = document.getElementById("resultModal");
+const resultModalCard = document.getElementById("resultModalCard");
+
+const resultIcon = document.getElementById("resultIcon");
+const resultBadge = document.getElementById("resultBadge");
+const resultTitle = document.getElementById("resultTitle");
+const resultMessage = document.getElementById("resultMessage");
+
 const rematchHint = document.getElementById("rematchHint");
 
+const homeButton = document.getElementById("homeButton");
+const rematchButton = document.getElementById("rematchButton");
+
 // ==========================================
-// 顯示右下角提示
+// 顯示右下角提示訊息
 // ==========================================
 function showToast(message) {
   toast.textContent = message;
@@ -119,7 +132,7 @@ function handleCellClick(x, y) {
   }
 
   if (currentTurn !== myColor) {
-    showToast("現在還沒輪到您");
+    showToast("請等待對手落子");
     return;
   }
 
@@ -135,7 +148,7 @@ function handleCellClick(x, y) {
 }
 
 // ==========================================
-// 更新目前回合文字
+// 更新目前輪到誰的文字
 // ==========================================
 function updateTurnText() {
   if (gameStatus === "finished") {
@@ -150,15 +163,106 @@ function updateTurnText() {
 }
 
 // ==========================================
-// 重設「再來一局」按鈕狀態
+// 隱藏結果視窗
 // ==========================================
-function resetRematchControls() {
-  rematchSection.classList.add("hidden");
+function hideResultModal() {
+  resultModal.classList.add("hidden");
+
+  resultModalCard.classList.remove(
+    "victory",
+    "defeat",
+    "draw",
+    "unavailable"
+  );
 
   rematchButton.disabled = false;
-  rematchButton.textContent = "與同一位玩家再來一局";
+  rematchButton.textContent = "與同對手繼續";
 
-  rematchHint.textContent = "等待雙方選擇是否繼續對戰";
+  rematchHint.textContent =
+    "可以返回首頁，或邀請同一位玩家再來一局。";
+}
+
+// ==========================================
+// 顯示結果視窗
+// ==========================================
+function showResultModal(type) {
+  hideResultModal();
+
+  resultModal.classList.remove("hidden");
+  resultModalCard.classList.add(type);
+
+  resultBadge.textContent = "GAME OVER";
+
+  if (type === "victory") {
+    resultIcon.textContent = "🏆";
+    resultTitle.textContent = "恭喜獲勝！";
+
+    resultMessage.textContent =
+      "您成功完成五子連線，贏得本場對戰。";
+
+    return;
+  }
+
+  if (type === "defeat") {
+    resultIcon.textContent = "😢";
+    resultTitle.textContent = "本局失敗";
+
+    resultMessage.textContent =
+      "對手已完成五子連線，再接再厲。";
+
+    return;
+  }
+
+  if (type === "draw") {
+    resultIcon.textContent = "🤝";
+    resultTitle.textContent = "本局平手";
+
+    resultMessage.textContent =
+      "棋盤已滿，雙方未分出勝負。";
+
+    return;
+  }
+
+  if (type === "unavailable") {
+    resultIcon.textContent = "🔌";
+    resultTitle.textContent = "對手已離線";
+
+    resultMessage.textContent =
+      "對手已返回首頁或離開遊戲，無法繼續對戰。";
+
+    resultBadge.textContent = "CONNECTION ENDED";
+
+    rematchButton.disabled = true;
+    rematchButton.textContent = "無法繼續";
+  }
+}
+
+// ==========================================
+// 回到首頁
+// ==========================================
+function resetToHome() {
+  myColor = null;
+  currentTurn = null;
+  gameStatus = "waiting";
+
+  currentBoard =
+    Array(BOARD_SIZE * BOARD_SIZE).fill(0);
+
+  loginSection.classList.remove("hidden");
+  gameInfo.classList.add("hidden");
+
+  roomIdText.textContent = "尚未配對";
+  myColorText.textContent = "尚未分配";
+  statusText.textContent = "等待中";
+
+  blackPlayerText.textContent = "等待玩家";
+  whitePlayerText.textContent = "等待玩家";
+
+  joinButton.disabled = false;
+  joinButton.textContent = "開始配對";
+
+  hideResultModal();
+  renderBoard();
 }
 
 // ==========================================
@@ -181,14 +285,27 @@ joinButton.addEventListener("click", () => {
 });
 
 // ==========================================
-// 新增：按下再來一局
+// 按下回首頁
+// ==========================================
+homeButton.addEventListener("click", () => {
+  socket.emit("leaveRoom");
+
+  resetToHome();
+
+  showToast("已返回首頁");
+});
+
+// ==========================================
+// 按下與同對手繼續
 // ==========================================
 rematchButton.addEventListener("click", () => {
   rematchButton.disabled = true;
-  rematchButton.textContent = "已送出邀請，等待對手...";
+
+  rematchButton.textContent =
+    "已送出邀請，等待對手...";
 
   rematchHint.textContent =
-    "已同意再來一局，等待對手確認";
+    "已同意再來一局，等待對手確認。";
 
   socket.emit("requestRematch");
 });
@@ -198,19 +315,22 @@ rematchButton.addEventListener("click", () => {
 // ==========================================
 socket.on("connect", () => {
   connectionDot.classList.add("online");
-  connectionText.textContent = "伺服器連線正常";
+
+  connectionText.textContent =
+    "伺服器連線正常";
 });
 
 socket.on("disconnect", () => {
   connectionDot.classList.remove("online");
-  connectionText.textContent = "伺服器連線中斷";
+
+  connectionText.textContent =
+    "伺服器連線中斷";
 });
 
 // ==========================================
 // 等待配對
 // ==========================================
 socket.on("queueStatus", (data) => {
-  statusText.textContent = data.message;
   showToast(data.message);
 });
 
@@ -228,13 +348,13 @@ socket.on("gameStarted", (data) => {
   myColorText.textContent =
     myColor === "black" ? "黑棋" : "白棋";
 
-  resetRematchControls();
+  hideResultModal();
 
   showToast("配對成功，遊戲開始");
 });
 
 // ==========================================
-// 更新棋盤資料
+// 接收後端最新遊戲狀態
 // ==========================================
 socket.on("gameState", (data) => {
   currentBoard = data.board;
@@ -262,38 +382,33 @@ socket.on("gameState", (data) => {
 });
 
 // ==========================================
-// 遊戲結束
+// 遊戲結束後顯示中央視窗
 // ==========================================
 socket.on("gameOver", (data) => {
   gameStatus = "finished";
 
-  rematchSection.classList.remove("hidden");
-  rematchButton.disabled = false;
-  rematchButton.textContent = "與同一位玩家再來一局";
-  rematchHint.textContent =
-    "雙方都按下按鈕後，系統會自動開始下一局";
-
   if (data.winner === "draw") {
     statusText.textContent = "本局平手";
-    showToast("棋盤已滿，本局平手");
+
+    showResultModal("draw");
     return;
   }
 
   if (data.winner === myColor) {
     statusText.textContent = "您獲勝了！";
-    showToast(`恭喜！${data.winnerName} 獲勝`);
+
+    showResultModal("victory");
   } else {
     statusText.textContent = "對手獲勝";
-    showToast(`${data.winnerName} 獲勝`);
+
+    showResultModal("defeat");
   }
 });
 
 // ==========================================
-// 新增：顯示再來一局同意人數
+// 顯示再來一局同意人數
 // ==========================================
 socket.on("rematchStatus", (data) => {
-  rematchSection.classList.remove("hidden");
-
   rematchHint.textContent =
     `${data.accepted} / ${data.total} 位玩家已同意再來一局`;
 
@@ -303,47 +418,49 @@ socket.on("rematchStatus", (data) => {
 });
 
 // ==========================================
-// 新增：同一組玩家開始下一局
+// 同一組玩家開始下一局
 // ==========================================
 socket.on("rematchStarted", (data) => {
   myColor = data.myColor;
-  currentBoard = Array(225).fill(0);
   currentTurn = "black";
   gameStatus = "playing";
+
+  currentBoard =
+    Array(BOARD_SIZE * BOARD_SIZE).fill(0);
 
   roomIdText.textContent = data.roomId;
 
   myColorText.textContent =
     myColor === "black" ? "黑棋" : "白棋";
 
-  resetRematchControls();
+  hideResultModal();
   renderBoard();
 
   showToast("雙方已同意，下一局開始！");
 });
 
 // ==========================================
-// 對手離線
+// 遊戲進行中對手離線
 // ==========================================
 socket.on("opponentDisconnected", () => {
   gameStatus = "finished";
 
-  rematchSection.classList.add("hidden");
+  statusText.textContent =
+    "對手已離線，遊戲結束";
 
-  statusText.textContent = "對手已離線，遊戲結束";
-  showToast("對手已離線");
+  showResultModal("unavailable");
 });
 
 // ==========================================
-// 新增：遊戲結束後對手離線
+// 遊戲結束後，對手選擇返回首頁
 // ==========================================
 socket.on("rematchUnavailable", (data) => {
-  rematchSection.classList.add("hidden");
+  gameStatus = "finished";
 
   statusText.textContent =
-    data?.message || "對手已離線，無法再來一局";
+    data?.message || "對手已離線，無法繼續對戰";
 
-  showToast("對手已離線，無法繼續對戰");
+  showResultModal("unavailable");
 });
 
 // ==========================================
@@ -353,5 +470,8 @@ socket.on("errorMessage", (message) => {
   showToast(message);
 });
 
+// ==========================================
+// 初始化畫面
+// ==========================================
 createBoard();
-resetRematchControls();
+hideResultModal();
