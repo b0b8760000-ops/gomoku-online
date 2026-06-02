@@ -1237,9 +1237,86 @@ button:disabled {
 }
 
 /* ==========================================
+   最新一步棋提示切換按鈕
+========================================== */
+.lastMoveSetting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 12px;
+
+  margin-top: 14px;
+  padding: 12px;
+
+  border: 1px solid #e8ddd1;
+  border-radius: 14px;
+
+  background: #fbf8f4;
+}
+
+.lastMoveSettingTitle {
+  display: block;
+
+  color: #55473d;
+
+  font-size: 14px;
+}
+
+.lastMoveSettingHint {
+  margin: 5px 0 0;
+
+  color: #948477;
+
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.lastMoveToggleButton {
+  width: auto;
+  min-width: 66px;
+
+  margin-top: 0;
+  padding: 9px 13px;
+
+  border-radius: 999px;
+
+  background: #a9a098;
+  color: #ffffff;
+
+  font-size: 13px;
+  font-weight: 700;
+
+  white-space: nowrap;
+}
+
+.lastMoveToggleButton:hover {
+  background: #90857c;
+}
+
+.lastMoveToggleButton.active {
+  background:
+    linear-gradient(
+      135deg,
+      #2f80ed,
+      #2464aa
+    );
+}
+
+.lastMoveToggleButton.active:hover {
+  background:
+    linear-gradient(
+      135deg,
+      #4993f2,
+      #2f75bd
+    );
+}
+
+/* ==========================================
    強制隱藏
    必須放在 CSS 最下面
 ========================================== */
+
 .hidden {
   display: none !important;
 }

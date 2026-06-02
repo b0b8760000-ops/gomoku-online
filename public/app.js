@@ -31,6 +31,16 @@ let undoPending = false;
 // ==========================================
 let lastMove = null;
 // ==========================================
+// 是否顯示最新一步棋外環
+//
+// 預設開啟。
+// 使用 localStorage 保存玩家自己的選擇。
+// ==========================================
+let showLastMoveHighlight =
+  localStorage.getItem(
+    "gomokuShowLastMoveHighlight"
+  ) !== "false";
+// ==========================================
 // Socket.IO 心跳與重新連線狀態
 // ==========================================
 let heartbeatTimer = null;
@@ -104,6 +114,13 @@ const myColorText =
 
 const statusText =
   document.getElementById("statusText");
+// ==========================================
+// 最新一步棋外環切換按鈕
+// ==========================================
+const lastMoveToggleButton =
+  document.getElementById(
+    "lastMoveToggleButton"
+  );
 
 const blackPlayerText =
   document.getElementById("blackPlayer");
@@ -284,6 +301,36 @@ function resetPrivateRoomLobby() {
     false
   );
 }
+// ==========================================
+// 更新最後一步提示按鈕外觀
+// ==========================================
+function updateLastMoveToggleButton() {
+  if (showLastMoveHighlight) {
+    lastMoveToggleButton.textContent =
+      "開啟";
+
+    lastMoveToggleButton.classList.add(
+      "active"
+    );
+
+    lastMoveToggleButton.setAttribute(
+      "aria-pressed",
+      "true"
+    );
+  } else {
+    lastMoveToggleButton.textContent =
+      "關閉";
+
+    lastMoveToggleButton.classList.remove(
+      "active"
+    );
+
+    lastMoveToggleButton.setAttribute(
+      "aria-pressed",
+      "false"
+    );
+  }
+}
 
 function showToast(message) {
   toast.textContent = message;
@@ -354,6 +401,7 @@ stone.className =
 // 加上 lastMove 樣式，顯示藍色外環
 // ==========================================
 if (
+  showLastMoveHighlight &&
   lastMove &&
   lastMove.x === x &&
   lastMove.y === y
@@ -918,6 +966,33 @@ rejectUndoButton.addEventListener(
   }
 );
 // ==========================================
+// 切換最新一步棋外環
+// ==========================================
+lastMoveToggleButton.addEventListener(
+  "click",
+  () => {
+    showLastMoveHighlight =
+      !showLastMoveHighlight;
+
+    localStorage.setItem(
+      "gomokuShowLastMoveHighlight",
+      String(showLastMoveHighlight)
+    );
+
+    updateLastMoveToggleButton();
+
+    // 立即重新繪製棋盤
+    // 不需要等待下一位玩家落子
+    renderBoard();
+
+    showToast(
+      showLastMoveHighlight
+        ? "已開啟最後一步棋提示"
+        : "已關閉最後一步棋提示"
+    );
+  }
+);
+// ==========================================
 // 建立私人房間
 // ==========================================
 createPrivateRoomButton.addEventListener(
@@ -1455,3 +1530,4 @@ roomChatCard.classList.add(
 );
 
 resetPrivateRoomLobby();
+updateLastMoveToggleButton();
