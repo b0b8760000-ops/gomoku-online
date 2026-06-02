@@ -46,6 +46,18 @@ const gameSchema = new mongoose.Schema(
       unique: true
     },
 
+    // 若是再來一局，記錄上一個房間編號
+    previousRoomId: {
+      type: String,
+      default: null
+    },
+
+    // 第幾局
+    round: {
+      type: Number,
+      default: 1
+    },
+
     players: [
       {
         socketId: String,
@@ -100,10 +112,10 @@ const Game = mongoose.model("Game", gameSchema);
 // ==========================================
 const BOARD_SIZE = 15;
 
-// 等待配對的玩家
+// 等待公開配對的玩家
 const waitingPlayers = [];
 
-// 已建立的房間
+// 正在進行或等待再來一局的房間
 const rooms = new Map();
 
 // ==========================================
@@ -136,6 +148,10 @@ function isValidPosition(x, y) {
     y >= 0 &&
     y < BOARD_SIZE
   );
+}
+
+function getOppositeColor(color) {
+  return color === "black" ? "white" : "black";
 }
 
 function checkWin(board, x, y, stoneValue) {
@@ -200,23 +216,33 @@ function getPlayerName(room, socketId) {
 function buildRoomState(room) {
   return {
     roomId: room.roomId,
+    round: room.round,
     board: room.board,
+
     players: room.players.map((player) => ({
       name: player.name,
       color: player.color
     })),
+
     currentTurn: room.currentTurn,
     status: room.status,
     winner: room.winner
   };
 }
 
+// ==========================================
+// 建立第一局
+// ==========================================
 async function startGame(player1, player2) {
   const roomId = generateRoomId();
 
   const room = {
     roomId,
+    previousRoomId: null,
+    round: 1,
+
     board: Array(225).fill(0),
+
     players: [
       {
         socketId: player1.socketId,
@@ -229,9 +255,16 @@ async function startGame(player1, player2) {
         color: "white"
       }
     ],
+
     currentTurn: "black",
     status: "playing",
-    winner: null
+    winner: null,
+
+    // 使用 Set，避免同一位玩家重複投票
+    rematchVotes: new Set(),
+
+    // 避免雙方同時按下後重複建立房間
+    rematchStarting: false
   };
 
   rooms.set(roomId, room);
@@ -242,16 +275,28 @@ async function startGame(player1, player2) {
   player1.socket.data.roomId = roomId;
   player2.socket.data.roomId = roomId;
 
-  await Game.create(room);
+  await Game.create({
+    roomId: room.roomId,
+    previousRoomId: room.previousRoomId,
+    round: room.round,
+    players: room.players,
+    board: room.board,
+    currentTurn: room.currentTurn,
+    status: room.status,
+    winner: room.winner,
+    moves: []
+  });
 
   io.to(player1.socketId).emit("gameStarted", {
     roomId,
-    myColor: "black"
+    myColor: "black",
+    round: room.round
   });
 
   io.to(player2.socketId).emit("gameStarted", {
     roomId,
-    myColor: "white"
+    myColor: "white",
+    round: room.round
   });
 
   io.to(roomId).emit("gameState", buildRoomState(room));
@@ -262,11 +307,93 @@ async function startGame(player1, player2) {
 }
 
 // ==========================================
+// 新增：與同一組玩家開始下一局
+// ==========================================
+async function startRematch(oldRoom) {
+  const oldRoomId = oldRoom.roomId;
+  const newRoomId = generateRoomId();
+
+  // 交換黑白棋，讓雙方輪流先下
+  const newPlayers = oldRoom.players.map((player) => ({
+    socketId: player.socketId,
+    name: player.name,
+    color: getOppositeColor(player.color)
+  }));
+
+  const playerSockets = newPlayers.map((player) =>
+    io.sockets.sockets.get(player.socketId)
+  );
+
+  // 避免其中一位玩家已經離線
+  if (playerSockets.some((playerSocket) => !playerSocket)) {
+    throw new Error("其中一位玩家已經離線");
+  }
+
+  const newRoom = {
+    roomId: newRoomId,
+    previousRoomId: oldRoomId,
+    round: (oldRoom.round || 1) + 1,
+
+    board: Array(225).fill(0),
+
+    players: newPlayers,
+
+    currentTurn: "black",
+    status: "playing",
+    winner: null,
+
+    rematchVotes: new Set(),
+    rematchStarting: false
+  };
+
+  // 每一局都建立新的 MongoDB 紀錄
+  // 不會覆蓋上一局棋譜
+  await Game.create({
+    roomId: newRoom.roomId,
+    previousRoomId: newRoom.previousRoomId,
+    round: newRoom.round,
+    players: newRoom.players,
+    board: newRoom.board,
+    currentTurn: newRoom.currentTurn,
+    status: newRoom.status,
+    winner: newRoom.winner,
+    moves: []
+  });
+
+  rooms.set(newRoomId, newRoom);
+
+  // 讓原本兩位玩家離開舊房間並加入新房間
+  newPlayers.forEach((player, index) => {
+    const playerSocket = playerSockets[index];
+
+    playerSocket.leave(oldRoomId);
+    playerSocket.join(newRoomId);
+    playerSocket.data.roomId = newRoomId;
+
+    io.to(player.socketId).emit("rematchStarted", {
+      roomId: newRoomId,
+      myColor: player.color,
+      round: newRoom.round
+    });
+  });
+
+  io.to(newRoomId).emit("gameState", buildRoomState(newRoom));
+
+  rooms.delete(oldRoomId);
+
+  console.log(`🔄 同一組玩家開始第 ${newRoom.round} 局`);
+  console.log(`🎮 新房間：${newRoomId}`);
+}
+
+// ==========================================
 // Socket.IO 即時連線
 // ==========================================
 io.on("connection", (socket) => {
   console.log(`🔌 玩家連線：${socket.id}`);
 
+  // ========================================
+  // 加入公開配對
+  // ========================================
   socket.on("joinQueue", async (data) => {
     const name = String(data?.name || "").trim();
 
@@ -313,6 +440,9 @@ io.on("connection", (socket) => {
     }
   });
 
+  // ========================================
+  // 玩家落子
+  // ========================================
   socket.on("makeMove", async (data) => {
     const roomId = socket.data.roomId;
     const room = rooms.get(roomId);
@@ -370,12 +500,18 @@ io.on("connection", (socket) => {
 
     const isWinner = checkWin(room.board, x, y, stoneValue);
 
+    const isDraw =
+      !isWinner &&
+      room.board.every((cell) => cell !== 0);
+
     if (isWinner) {
       room.status = "finished";
       room.winner = playerColor;
+    } else if (isDraw) {
+      room.status = "finished";
+      room.winner = "draw";
     } else {
-      room.currentTurn =
-        playerColor === "black" ? "white" : "black";
+      room.currentTurn = getOppositeColor(playerColor);
     }
 
     try {
@@ -388,6 +524,7 @@ io.on("connection", (socket) => {
             status: room.status,
             winner: room.winner
           },
+
           $push: {
             moves: move
           }
@@ -407,8 +544,71 @@ io.on("connection", (socket) => {
 
       console.log(`🏆 ${playerName} 獲勝，房間：${roomId}`);
     }
+
+    if (isDraw) {
+      io.to(roomId).emit("gameOver", {
+        winner: "draw",
+        winnerName: "平手"
+      });
+
+      console.log(`🤝 平手，房間：${roomId}`);
+    }
   });
 
+  // ========================================
+  // 新增：要求與同一位玩家再來一局
+  // ========================================
+  socket.on("requestRematch", async () => {
+    const roomId = socket.data.roomId;
+    const room = rooms.get(roomId);
+
+    if (!room) {
+      socket.emit("errorMessage", "找不到目前的遊戲房間");
+      return;
+    }
+
+    if (room.status !== "finished") {
+      socket.emit("errorMessage", "目前遊戲尚未結束");
+      return;
+    }
+
+    const isPlayer = room.players.some(
+      (player) => player.socketId === socket.id
+    );
+
+    if (!isPlayer) {
+      socket.emit("errorMessage", "您不是這個房間的玩家");
+      return;
+    }
+
+    room.rematchVotes.add(socket.id);
+
+    io.to(roomId).emit("rematchStatus", {
+      accepted: room.rematchVotes.size,
+      total: room.players.length
+    });
+
+    if (
+      room.rematchVotes.size === room.players.length &&
+      !room.rematchStarting
+    ) {
+      room.rematchStarting = true;
+
+      try {
+        await startRematch(room);
+      } catch (error) {
+        room.rematchStarting = false;
+
+        console.error("❌ 再來一局失敗：", error.message);
+
+        io.to(roomId).emit("errorMessage", "再來一局失敗，請重新配對");
+      }
+    }
+  });
+
+  // ========================================
+  // 玩家離線
+  // ========================================
   socket.on("disconnect", async () => {
     console.log(`❌ 玩家離線：${socket.id}`);
 
@@ -422,7 +622,7 @@ io.on("connection", (socket) => {
 
     const room = rooms.get(roomId);
 
-    if (!room || room.status !== "playing") {
+    if (!room) {
       return;
     }
 
@@ -432,8 +632,19 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const winnerColor =
-      disconnectedColor === "black" ? "white" : "black";
+    // 遊戲結束後，有玩家離線
+    // 代表不能繼續再來一局
+    if (room.status === "finished") {
+      io.to(roomId).emit("rematchUnavailable", {
+        message: "對手已離線，無法再來一局"
+      });
+
+      rooms.delete(roomId);
+      return;
+    }
+
+    // 遊戲進行中，有玩家中途離線
+    const winnerColor = getOppositeColor(disconnectedColor);
 
     room.status = "finished";
     room.winner = winnerColor;
@@ -455,6 +666,8 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("opponentDisconnected", {
       winner: winnerColor
     });
+
+    rooms.delete(roomId);
   });
 });
 
@@ -490,6 +703,6 @@ app.get("/api/games", async (req, res) => {
 // 啟動 Server
 // ==========================================
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server 已啟動`);
+  console.log("🚀 Server 已啟動");
   console.log(`🌐 本機網址：http://localhost:${PORT}`);
 });

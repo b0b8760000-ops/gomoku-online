@@ -296,3 +296,34 @@ button:disabled {
     height: 24px;
   }
 }
+/* ==========================================
+   再來一局區塊
+========================================== */
+.rematchSection {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #ebe3da;
+}
+
+.rematchButton {
+  width: 100%;
+  margin-top: 0;
+  background: linear-gradient(135deg, #9a6a36, #714821);
+}
+
+.rematchButton:hover {
+  background: linear-gradient(135deg, #b17a40, #85552a);
+}
+
+.rematchButton:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.rematchHint {
+  margin: 10px 0 0;
+  color: #817468;
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+}
