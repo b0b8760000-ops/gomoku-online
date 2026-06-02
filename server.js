@@ -187,7 +187,13 @@ const BOARD_SIZE = 15;
 const waitingPlayers = [];
 
 const rooms = new Map();
-
+// ==========================================
+// 尚未開始遊戲的私人房間
+// Key：4 位數房號
+// Value：建立者資訊
+// ==========================================
+const waitingPrivateRooms =
+  new Map();
 // ==========================================
 // 新增：公開聊天室暫存訊息
 // 所有在線玩家都可以看見
@@ -204,6 +210,71 @@ function generateRoomId() {
   return (
     `ROOM-${Date.now()}-` +
     `${Math.floor(Math.random() * 10000)}`
+  );
+}
+// ==========================================
+// 產生不重複的 4 位數私人房號
+// ==========================================
+function generatePrivateRoomCode() {
+  let roomCode;
+
+  do {
+    roomCode =
+      String(
+        Math.floor(
+          1000 +
+          Math.random() * 9000
+        )
+      );
+  } while (
+    waitingPrivateRooms.has(
+      roomCode
+    )
+  );
+
+  return roomCode;
+}
+
+// ==========================================
+// 移除某位玩家建立的私人等待房間
+// ==========================================
+function removePrivateRoomBySocketId(
+  socketId
+) {
+  for (
+    const [
+      roomCode,
+      privateRoom
+    ] of waitingPrivateRooms
+  ) {
+    if (
+      privateRoom.creator
+        .socketId === socketId
+    ) {
+      waitingPrivateRooms.delete(
+        roomCode
+      );
+
+      return roomCode;
+    }
+  }
+
+  return null;
+}
+
+// ==========================================
+// 清除玩家的等待狀態
+// 避免同時進入快速配對與私人房間
+// ==========================================
+function clearWaitingState(
+  socketId
+) {
+  removeFromWaitingQueue(
+    socketId
+  );
+
+  removePrivateRoomBySocketId(
+    socketId
   );
 }
 
@@ -933,7 +1004,230 @@ io.on(
         `♻️ 玩家連線狀態已恢復：${socket.id}`
       );
     }
+    // ======================================
+    // 建立私人房間
+    // ======================================
+    socket.on(
+      "createPrivateRoom",
+      (data) => {
+        const name =
+          cleanPlayerName(
+            data?.name
+          );
 
+        if (!name) {
+          socket.emit(
+            "privateRoomError",
+            "請先輸入玩家名稱"
+          );
+
+          return;
+        }
+
+        clearWaitingState(
+          socket.id
+        );
+
+        const roomCode =
+          generatePrivateRoomCode();
+
+        const creator = {
+          socketId:
+            socket.id,
+
+          socket,
+
+          name
+        };
+
+        waitingPrivateRooms.set(
+          roomCode,
+          {
+            roomCode,
+            creator,
+            createdAt:
+              Date.now()
+          }
+        );
+
+        socket.data.displayName =
+          name;
+
+        socket.data.privateRoomCode =
+          roomCode;
+
+        socket.emit(
+          "privateRoomCreated",
+          {
+            roomCode
+          }
+        );
+
+        console.log(
+          `🔐 私人房間已建立：${roomCode}，建立者：${name}`
+        );
+      }
+    );
+
+    // ======================================
+    // 加入私人房間
+    // ======================================
+    socket.on(
+      "joinPrivateRoom",
+      async (data) => {
+        const name =
+          cleanPlayerName(
+            data?.name
+          );
+
+        const roomCode =
+          String(
+            data?.roomCode || ""
+          ).trim();
+
+        if (!name) {
+          socket.emit(
+            "privateRoomError",
+            "請先輸入玩家名稱"
+          );
+
+          return;
+        }
+
+        if (
+          !/^\d{4}$/.test(
+            roomCode
+          )
+        ) {
+          socket.emit(
+            "privateRoomError",
+            "請輸入正確的 4 位數房號"
+          );
+
+          return;
+        }
+
+        const privateRoom =
+          waitingPrivateRooms.get(
+            roomCode
+          );
+
+        if (!privateRoom) {
+          socket.emit(
+            "privateRoomError",
+            "找不到此房間，請確認房號是否正確"
+          );
+
+          return;
+        }
+
+        if (
+          privateRoom.creator
+            .socketId === socket.id
+        ) {
+          socket.emit(
+            "privateRoomError",
+            "不能加入自己建立的房間"
+          );
+
+          return;
+        }
+
+        const creatorSocket =
+          io.sockets.sockets.get(
+            privateRoom.creator
+              .socketId
+          );
+
+        if (!creatorSocket) {
+          waitingPrivateRooms.delete(
+            roomCode
+          );
+
+          socket.emit(
+            "privateRoomError",
+            "房間建立者已離線"
+          );
+
+          return;
+        }
+
+        clearWaitingState(
+          socket.id
+        );
+
+        waitingPrivateRooms.delete(
+          roomCode
+        );
+
+        creatorSocket.data
+          .privateRoomCode =
+          null;
+
+        socket.data.privateRoomCode =
+          null;
+
+        socket.data.displayName =
+          name;
+
+        const joiningPlayer = {
+          socketId:
+            socket.id,
+
+          socket,
+
+          name
+        };
+
+        try {
+          await startGame(
+            privateRoom.creator,
+            joiningPlayer
+          );
+
+          console.log(
+            `🔓 私人房間 ${roomCode} 開始對局`
+          );
+        } catch (error) {
+          console.error(
+            "❌ 私人房間開始失敗：",
+            error.message
+          );
+
+          io.to(
+            privateRoom.creator
+              .socketId
+          ).emit(
+            "privateRoomError",
+            "建立對局失敗，請重新建立房間"
+          );
+
+          socket.emit(
+            "privateRoomError",
+            "加入對局失敗，請重新嘗試"
+          );
+        }
+      }
+    );
+
+    // ======================================
+    // 取消私人房間等待
+    // ======================================
+    socket.on(
+      "cancelPrivateRoom",
+      () => {
+        removePrivateRoomBySocketId(
+          socket.id
+        );
+
+        socket.data.privateRoomCode =
+          null;
+
+        socket.emit(
+          "privateRoomCancelled"
+        );
+      }
+    );
     // ======================================
     // 初次取得排行榜
     // ======================================
@@ -983,9 +1277,9 @@ io.on(
 socket.data.displayName =
   name;
 
-        removeFromWaitingQueue(
-          socket.id
-        );
+clearWaitingState(
+  socket.id
+);
 
         const player = {
           socketId:
@@ -1940,9 +2234,9 @@ socket.data.displayName =
           `❌ 玩家離線：${socket.id}`
         );
 
-        removeFromWaitingQueue(
-          socket.id
-        );
+clearWaitingState(
+  socket.id
+);
 
         const roomId =
           socket.data.roomId;

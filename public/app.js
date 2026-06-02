@@ -44,6 +44,49 @@ const board = document.getElementById("board");
 const joinButton =
   document.getElementById("joinButton");
 
+// ==========================================
+// 私人房間元件
+// ==========================================
+const createPrivateRoomButton =
+  document.getElementById(
+    "createPrivateRoomButton"
+  );
+
+const privateRoomCodeInput =
+  document.getElementById(
+    "privateRoomCodeInput"
+  );
+
+const joinPrivateRoomButton =
+  document.getElementById(
+    "joinPrivateRoomButton"
+  );
+
+const privateRoomStatusText =
+  document.getElementById(
+    "privateRoomStatusText"
+  );
+
+const privateRoomWaitingBox =
+  document.getElementById(
+    "privateRoomWaitingBox"
+  );
+
+const createdRoomCodeText =
+  document.getElementById(
+    "createdRoomCodeText"
+  );
+
+const cancelPrivateRoomButton =
+  document.getElementById(
+    "cancelPrivateRoomButton"
+  );
+
+const roomChatCard =
+  document.getElementById(
+    "roomChatCard"
+  );
+
 const playerNameInput =
   document.getElementById("playerName");
 
@@ -200,6 +243,48 @@ function stopHeartbeat() {
 
   heartbeatTimer = null;
 }
+
+// ==========================================
+// 大廳按鈕啟用與停用
+// ==========================================
+function setLobbyControlsDisabled(
+  disabled
+) {
+  joinButton.disabled =
+    disabled;
+
+  createPrivateRoomButton.disabled =
+    disabled;
+
+  privateRoomCodeInput.disabled =
+    disabled;
+
+  joinPrivateRoomButton.disabled =
+    disabled;
+}
+
+// ==========================================
+// 重設私人房間等待畫面
+// ==========================================
+function resetPrivateRoomLobby() {
+  privateRoomWaitingBox.classList.add(
+    "hidden"
+  );
+
+  createdRoomCodeText.textContent =
+    "0000";
+
+  privateRoomStatusText.textContent =
+    "建立房間後，將 4 位數房號分享給朋友。";
+
+  privateRoomCodeInput.value =
+    "";
+
+  setLobbyControlsDisabled(
+    false
+  );
+}
+
 function showToast(message) {
   toast.textContent = message;
 
@@ -706,6 +791,11 @@ function showResultModal(type) {
 // 回首頁
 // ==========================================
 function resetToHome() {
+  roomChatCard.classList.add(
+  "hidden"
+);
+
+resetPrivateRoomLobby();
   myColor = null;
   currentTurn = null;
   gameStatus = "waiting";
@@ -766,7 +856,7 @@ joinButton.addEventListener(
 
     joinButton.textContent =
       "等待配對中...";
-
+setLobbyControlsDisabled(true);
     socket.emit("joinQueue", {
       name
     });
@@ -827,7 +917,104 @@ rejectUndoButton.addEventListener(
     undoRequestBox.classList.add("hidden");
   }
 );
+// ==========================================
+// 建立私人房間
+// ==========================================
+createPrivateRoomButton.addEventListener(
+  "click",
+  () => {
+    const name =
+      playerNameInput.value.trim();
 
+    if (!name) {
+      showToast(
+        "請先輸入玩家名稱"
+      );
+
+      playerNameInput.focus();
+
+      return;
+    }
+
+    setLobbyControlsDisabled(true);
+
+    socket.emit(
+      "createPrivateRoom",
+      {
+        name
+      }
+    );
+  }
+);
+
+// ==========================================
+// 輸入房號加入私人房間
+// ==========================================
+joinPrivateRoomButton.addEventListener(
+  "click",
+  () => {
+    const name =
+      playerNameInput.value.trim();
+
+    const roomCode =
+      privateRoomCodeInput
+        .value
+        .trim();
+
+    if (!name) {
+      showToast(
+        "請先輸入玩家名稱"
+      );
+
+      playerNameInput.focus();
+
+      return;
+    }
+
+    if (
+      !/^\d{4}$/.test(roomCode)
+    ) {
+      showToast(
+        "請輸入正確的 4 位數房號"
+      );
+
+      privateRoomCodeInput.focus();
+
+      return;
+    }
+
+    setLobbyControlsDisabled(true);
+
+    socket.emit(
+      "joinPrivateRoom",
+      {
+        name,
+        roomCode
+      }
+    );
+  }
+);
+
+// ==========================================
+// 取消私人房間等待
+// ==========================================
+cancelPrivateRoomButton.addEventListener(
+  "click",
+  () => {
+    socket.emit(
+      "cancelPrivateRoom"
+    );
+  }
+);
+privateRoomCodeInput.addEventListener(
+  "input",
+  () => {
+    privateRoomCodeInput.value =
+      privateRoomCodeInput.value
+        .replace(/\D/g, "")
+        .slice(0, 4);
+  }
+);
 // ==========================================
 // Socket.IO 基本連線
 // ==========================================
@@ -906,6 +1093,53 @@ socket.on(
     );
   }
 );
+// ==========================================
+// 私人房間建立成功
+// ==========================================
+socket.on(
+  "privateRoomCreated",
+  (data) => {
+    privateRoomWaitingBox.classList.remove(
+      "hidden"
+    );
+
+    createdRoomCodeText.textContent =
+      data.roomCode;
+
+    privateRoomStatusText.textContent =
+      "私人房間已建立，等待朋友加入。";
+
+    showToast(
+      `私人房間 ${data.roomCode} 已建立`
+    );
+  }
+);
+
+// ==========================================
+// 私人房間等待已取消
+// ==========================================
+socket.on(
+  "privateRoomCancelled",
+  () => {
+    resetPrivateRoomLobby();
+
+    showToast(
+      "已取消私人房間"
+    );
+  }
+);
+
+// ==========================================
+// 私人房間錯誤
+// ==========================================
+socket.on(
+  "privateRoomError",
+  (message) => {
+    resetPrivateRoomLobby();
+
+    showToast(message);
+  }
+);
 
 // ==========================================
 // 配對與遊戲狀態
@@ -915,10 +1149,17 @@ socket.on("queueStatus", (data) => {
 });
 
 socket.on("gameStarted", (data) => {
+
   myColor = data.myColor;
 
   loginSection.classList.add("hidden");
   gameInfo.classList.remove("hidden");
+  roomChatCard.classList.remove(
+  "hidden"
+);
+
+resetChat();
+enableChat();
 
   roomIdText.textContent =
     data.roomId;
@@ -1021,6 +1262,9 @@ socket.on("rematchStatus", (data) => {
 });
 
 socket.on("rematchStarted", (data) => {
+  roomChatCard.classList.remove(
+  "hidden"
+);
   myColor = data.myColor;
   currentTurn = "black";
   gameStatus = "playing";
@@ -1206,3 +1450,8 @@ createBoard();
 resetChat();
 hideResultModal();
 updateUndoButton();
+roomChatCard.classList.add(
+  "hidden"
+);
+
+resetPrivateRoomLobby();

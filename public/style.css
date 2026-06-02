@@ -320,6 +320,162 @@ button:disabled {
   line-height: 1.6;
 }
 
+/* ==========================================
+   私人房間
+========================================== */
+.lobbyDivider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  margin: 18px 0 14px;
+
+  color: #99897b;
+
+  font-size: 12px;
+  text-align: center;
+}
+
+.lobbyDivider::before,
+.lobbyDivider::after {
+  flex: 1;
+
+  height: 1px;
+
+  content: "";
+
+  background: #e9dfd5;
+}
+
+.privateRoomPanel {
+  padding: 13px;
+
+  border: 1px solid #e8ddd1;
+  border-radius: 15px;
+
+  background: #fbf8f4;
+}
+
+.createPrivateRoomButton {
+  margin-top: 0;
+
+  background:
+    linear-gradient(
+      135deg,
+      #806044,
+      #5d4432
+    );
+}
+
+.createPrivateRoomButton:hover {
+  background:
+    linear-gradient(
+      135deg,
+      #977352,
+      #73523a
+    );
+}
+
+.privateJoinRow {
+  display: grid;
+  grid-template-columns: 1fr 68px;
+
+  gap: 8px;
+
+  margin-top: 10px;
+}
+
+.privateJoinRow input {
+  min-width: 0;
+
+  text-align: center;
+  letter-spacing: 3px;
+}
+
+.privateJoinRow button {
+  margin-top: 0;
+
+  padding: 10px 8px;
+}
+
+.joinPrivateRoomButton {
+  background: #706052;
+}
+
+.joinPrivateRoomButton:hover {
+  background: #887567;
+}
+
+.privateRoomStatusText {
+  margin: 10px 0 0;
+
+  color: #948477;
+
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.privateRoomWaitingBox {
+  margin-top: 14px;
+  padding: 16px;
+
+  border: 1px solid #ecd49f;
+  border-radius: 15px;
+
+  background:
+    linear-gradient(
+      145deg,
+      #fff9e9,
+      #fff4cf
+    );
+
+  text-align: center;
+}
+
+.privateRoomWaitingLabel {
+  margin: 0;
+
+  color: #8c6a32;
+
+  font-size: 12px;
+  font-weight: 700;
+
+  letter-spacing: 1px;
+}
+
+.createdRoomCodeText {
+  display: block;
+
+  margin: 8px 0;
+
+  color: #5f431e;
+
+  font-size: 38px;
+  letter-spacing: 8px;
+}
+
+.privateRoomWaitingHint {
+  margin: 0;
+
+  color: #907649;
+
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.cancelPrivateRoomButton {
+  margin-top: 12px;
+
+  border: 1px solid #e2ccb0;
+
+  background: rgba(255, 255, 255, 0.72);
+  color: #725531;
+}
+
+.cancelPrivateRoomButton:hover {
+  background: #ffffff;
+}
+
 .hidden {
   display: none;
 }

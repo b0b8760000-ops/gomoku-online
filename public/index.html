@@ -60,9 +60,82 @@
             placeholder="例如：bababoi"
           />
 
-          <button id="joinButton" type="button">
-            開始配對
-          </button>
+<button id="joinButton" type="button">
+  快速配對
+</button>
+<!-- ======================================
+     私人房間
+======================================= -->
+<div class="lobbyDivider">
+  <span>或使用私人房間</span>
+</div>
+
+<div class="privateRoomPanel">
+  <button
+    id="createPrivateRoomButton"
+    class="createPrivateRoomButton"
+    type="button"
+  >
+    建立私人房間
+  </button>
+
+  <div class="privateJoinRow">
+    <input
+      id="privateRoomCodeInput"
+      type="text"
+      inputmode="numeric"
+      maxlength="4"
+      placeholder="輸入 4 位數房號"
+      autocomplete="off"
+    />
+
+    <button
+      id="joinPrivateRoomButton"
+      class="joinPrivateRoomButton"
+      type="button"
+    >
+      加入
+    </button>
+  </div>
+
+  <p
+    id="privateRoomStatusText"
+    class="privateRoomStatusText"
+  >
+    建立房間後，將 4 位數房號分享給朋友。
+  </p>
+</div>
+
+<!-- ======================================
+     等待私人房間玩家
+======================================= -->
+<div
+  id="privateRoomWaitingBox"
+  class="privateRoomWaitingBox hidden"
+>
+  <p class="privateRoomWaitingLabel">
+    私人房間已建立
+  </p>
+
+  <strong
+    id="createdRoomCodeText"
+    class="createdRoomCodeText"
+  >
+    0000
+  </strong>
+
+  <p class="privateRoomWaitingHint">
+    請將房號分享給朋友，等待對方加入。
+  </p>
+
+  <button
+    id="cancelPrivateRoomButton"
+    class="cancelPrivateRoomButton"
+    type="button"
+  >
+    取消等待
+  </button>
+</div>
         </div>
 
         <div id="gameInfo" class="hidden">
@@ -216,7 +289,10 @@
         <!-- ================================
              新增：聊天室
         ================================= -->
-        <section class="sideCard chatCard">
+<section
+  id="roomChatCard"
+  class="sideCard chatCard hidden"
+>
           <div class="sideCardHeader">
             <div>
               <p class="sideCardTag">
