@@ -1063,3 +1063,119 @@ h2 {
     filter: brightness(0.45) blur(1px);
   }
 }
+/* =========================================================
+   大逃殺模式：木質棋盤本體同步縮小
+   貼在 style.css 最下方，覆蓋舊版棋盤背景。
+========================================================= */
+
+/*
+  .board 保留原本 15 × 15 的座標空間。
+  真正會縮小的是 ::before 木質棋盤表面。
+*/
+.board {
+  --board-collapse-inset: 0px;
+
+  position: relative;
+  isolation: isolate;
+
+  /*
+    原本木質背景不能再直接放在 .board 上，
+    否則外圈棋格消失後，底下仍然會保留完整大木板。
+  */
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/*
+  這一層才是真正可縮小的木質棋盤。
+  每次縮圈時，四周會向中央內縮 42px。
+*/
+.board::before {
+  position: absolute;
+  z-index: 0;
+
+  /*
+    -7px 用於補回原本木板外框寬度。
+    初始狀態看起來會與舊版棋盤大小相同。
+  */
+  inset: calc(var(--board-collapse-inset) - 7px);
+
+  border: 7px solid #a96f34;
+  border-radius: 20px;
+
+  pointer-events: none;
+  content: "";
+
+  background:
+    radial-gradient(
+      circle at 22% 18%,
+      rgba(255, 235, 184, 0.42),
+      transparent 30%
+    ),
+    repeating-linear-gradient(
+      3deg,
+      rgba(112, 69, 28, 0.055) 0px,
+      rgba(112, 69, 28, 0.055) 2px,
+      rgba(255, 221, 155, 0.045) 3px,
+      rgba(255, 221, 155, 0.045) 8px
+    ),
+    linear-gradient(
+      145deg,
+      #e2b66e 0%,
+      #d7a65d 46%,
+      #c9914b 100%
+    );
+
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 224, 169, 0.35),
+    inset 0 0 24px rgba(110, 63, 24, 0.16),
+    0 15px 28px rgba(99, 65, 35, 0.2);
+}
+
+/*
+  收到 Socket.IO 的 boardShrink 事件後，
+  app.js 會加上 boardSurfaceShrinking class。
+*/
+.board.boardSurfaceShrinking::before {
+  transition:
+    inset 0.95s cubic-bezier(0.3, 0.02, 0.38, 1),
+    border-radius 0.95s ease,
+    box-shadow 0.95s ease;
+}
+
+/*
+  棋格要顯示在木質背景上方。
+*/
+.board .cell {
+  z-index: 1;
+}
+
+/*
+  外圍崩塌格子本身也補上木紋，
+  避免動畫只看到格線掉落。
+*/
+.board .cell.collapsing {
+  background:
+    radial-gradient(
+      circle at 22% 18%,
+      rgba(255, 235, 184, 0.32),
+      transparent 34%
+    ),
+    repeating-linear-gradient(
+      3deg,
+      rgba(112, 69, 28, 0.075) 0px,
+      rgba(112, 69, 28, 0.075) 2px,
+      rgba(255, 221, 155, 0.055) 3px,
+      rgba(255, 221, 155, 0.055) 7px
+    ),
+    linear-gradient(
+      145deg,
+      #dfb16a 0%,
+      #ce954e 100%
+    ) !important;
+
+  box-shadow:
+    inset 0 0 0 1px rgba(110, 63, 24, 0.16),
+    0 10px 16px rgba(73, 43, 24, 0.2);
+}

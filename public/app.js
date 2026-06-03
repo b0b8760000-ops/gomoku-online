@@ -11,6 +11,9 @@ const BOARD_CELL_COUNT = BOARD_SIZE * BOARD_SIZE;
 const GAME_MODE_STANDARD = "standard";
 const GAME_MODE_BATTLE_ROYALE = "battle-royale";
 const BATTLE_ROYALE_ANIMATION_MS = 950;
+// 每一格棋盤的尺寸。
+// 必須與 style.css 中 .cell 的 width、height 保持一致。
+const BOARD_CELL_PIXEL = 42;
 const $ = (id) => document.getElementById(id);
 
 // ==========================================
@@ -249,8 +252,8 @@ function getGameModeName(mode = currentGameMode) {
 function updateModeDescription() {
   modeDescription.textContent =
     getSelectedGameMode() === GAME_MODE_BATTLE_ROYALE
-      ? "每 60 秒或累積 10 手，最外圈會崩塌並移除該圈棋子。棋盤最低縮至 7 × 7。"
-      : "標準 15 × 15 棋盤，先完成五子連線即可獲勝。";
+      ? "此選擇會同時套用於快速配對與建立私人房間。每 60 秒或累積 10 手，最外圈會崩塌並移除該圈棋子。棋盤最低縮至 7 × 7。"
+      : "此選擇會同時套用於快速配對與建立私人房間。使用標準 15 × 15 棋盤，先完成五子連線即可獲勝。";
 }
 
 function isCellActive(x, y) {
@@ -259,6 +262,37 @@ function isCellActive(x, y) {
 
 function getCellKey(x, y) {
   return `${x},${y}`;
+}
+/**
+ * 控制木質棋盤表面的縮小程度。
+ *
+ * level = 0：15 × 15
+ * level = 1：13 × 13
+ * level = 2：11 × 11
+ * level = 3： 9 × 9
+ * level = 4： 7 × 7
+ *
+ * animate = true 時，木板會播放向中央縮小的動畫。
+ */
+function setBoardSurfaceShrinkLevel(level = 0, animate = false) {
+  const normalizedLevel =
+    currentGameMode === GAME_MODE_BATTLE_ROYALE
+      ? Math.max(0, Math.min(4, Number(level) || 0))
+      : 0;
+
+  board.classList.remove("boardSurfaceShrinking");
+
+  if (animate) {
+    // 強制瀏覽器重新計算一次樣式，
+    // 確保每次縮圈都會重新播放 transition。
+    void board.offsetWidth;
+    board.classList.add("boardSurfaceShrinking");
+  }
+
+  board.style.setProperty(
+    "--board-collapse-inset",
+    `${normalizedLevel * BOARD_CELL_PIXEL}px`
+  );
 }
 
 function formatShrinkCountdown() {
@@ -315,6 +349,16 @@ function applyRoomModeState(data = {}) {
     : activeMax - activeMin + 1;
   nextShrinkAt = data.nextShrinkAt || null;
   movesUntilShrink = Number.isInteger(data.movesUntilShrink) ? data.movesUntilShrink : 10;
+    // Render 重啟、重新整理網頁或重新觀戰時，
+  // 讓木質棋盤直接恢復到正確大小。
+  setBoardSurfaceShrinkLevel(
+    currentGameMode === GAME_MODE_BATTLE_ROYALE
+      ? Number.isInteger(data.shrinkLevel)
+        ? data.shrinkLevel
+        : activeMin
+      : 0,
+    false
+  );
   updateBattleRoyalePanel();
 }
 
@@ -724,6 +768,10 @@ function resetToHome() {
   movesUntilShrink = 10;
   shrinkingCells.clear();
   clearTimeout(shrinkAnimationTimer);
+
+  // 返回首頁後恢復成完整的 15 × 15 木質棋盤。
+  setBoardSurfaceShrinkLevel(0, false);
+
   updateBattleRoyalePanel();
 
   lobbySection.classList.remove("hidden");
@@ -1073,6 +1121,13 @@ socket.on("boardShrink", (data) => {
   currentBoard = Array.isArray(data.boardBefore) ? data.boardBefore : currentBoard;
   shrinkingCells = new Set(
     (data.collapsedPositions || []).map((position) => getCellKey(position.x, position.y))
+  );
+    // 外圈格子掉落的同時，木質棋盤外框也向中央縮小。
+  setBoardSurfaceShrinkLevel(
+    Number.isInteger(data.shrinkLevel)
+      ? data.shrinkLevel
+      : activeMin + 1,
+    true
   );
   nextShrinkAt = data.nextShrinkAt || null;
   movesUntilShrink = Number.isInteger(data.movesUntilShrink) ? data.movesUntilShrink : 10;
