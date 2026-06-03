@@ -972,3 +972,94 @@ h2 {
     0 0 19px rgba(47, 128, 237, 0.9),
     0 5px 8px rgba(67, 47, 28, 0.28);
 }
+
+/* =========================================================
+   大逃殺模式 Battle Royale Gomoku
+========================================================= */
+.modeSelect {
+  width: 100%;
+  border: 1px solid #e3d5c7;
+  border-radius: 13px;
+  padding: 12px 13px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.9);
+  outline: none;
+}
+
+.modeDescription {
+  margin-top: 9px;
+  padding: 10px 11px;
+  border: 1px solid #ead9c8;
+  border-radius: 12px;
+  color: #856d5b;
+  background: #fffaf4;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.battleRoyaleInfo {
+  margin: 12px 0 2px;
+  padding: 12px;
+  border: 1px solid rgba(178, 74, 53, 0.24);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top right, rgba(255, 179, 111, 0.22), transparent 45%),
+    rgba(255, 246, 237, 0.96);
+}
+
+.battleRoyaleTitle {
+  margin-bottom: 7px;
+  color: #a34232;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.battleRoyaleInfo p {
+  margin: 4px 0 0;
+  color: #8a6656;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cell.collapsed {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.cell.collapsing {
+  z-index: 8;
+  pointer-events: none;
+  animation: boardCellCollapse 0.95s cubic-bezier(0.3, 0.02, 0.38, 1) forwards;
+}
+
+.cell.collapsing::before,
+.cell.collapsing::after {
+  background: rgba(111, 46, 29, 0.9);
+}
+
+.battleRoyaleBoard {
+  background:
+    radial-gradient(circle at center, rgba(255, 225, 161, 0.42), transparent 38%),
+    repeating-linear-gradient(3deg, rgba(112, 69, 28, 0.055) 0px, rgba(112, 69, 28, 0.055) 2px, rgba(255, 221, 155, 0.045) 3px, rgba(255, 221, 155, 0.045) 6px),
+    #d2a15f;
+}
+
+@keyframes boardCellCollapse {
+  0% {
+    opacity: 1;
+    transform: translateY(0) rotate(0deg) scale(1);
+    filter: brightness(1);
+  }
+
+  35% {
+    opacity: 0.98;
+    transform: translateY(8px) rotate(4deg) scale(0.96);
+    filter: brightness(0.88);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(70px) rotate(18deg) scale(0.62);
+    filter: brightness(0.45) blur(1px);
+  }
+}

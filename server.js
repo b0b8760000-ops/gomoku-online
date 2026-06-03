@@ -31,9 +31,37 @@ const PORT = Number(process.env.PORT || 3000);
 const BOARD_SIZE = 15;
 const BOARD_CELL_COUNT = BOARD_SIZE * BOARD_SIZE;
 
+// ==========================================
+// 遊戲模式
+// ==========================================
+const GAME_MODE_STANDARD = "standard";
+const GAME_MODE_BATTLE_ROYALE = "battle-royale";
+
+// 大逃殺模式：每 60 秒或每累積 10 手，任一條件先到就縮一圈。
+// 15x15 -> 13x13 -> 11x11 -> 9x9 -> 7x7。
+const BATTLE_ROYALE_SHRINK_INTERVAL_MS = 60 * 1000;
+const BATTLE_ROYALE_MOVES_PER_SHRINK = 10;
+const BATTLE_ROYALE_MIN_BOARD_SIZE = 7;
+const BATTLE_ROYALE_ANIMATION_MS = 950;
+
 // 玩家一般短暫斷線時，保留房間 3 分鐘。
 // Render 完整重啟時，則改由 MongoDB active_rooms 恢復。
 const DISCONNECT_GRACE_PERIOD_MS = 3 * 60 * 1000;
+// ==========================================
+// 雙方同時離線處理
+// ==========================================
+
+// 雙方都離線超過 3 分鐘後，直接刪除未完成棋局。
+// 這種情況不計算勝負，也不更新排行榜。
+const BOTH_OFFLINE_TIMEOUT_MS = 3 * 60 * 1000;
+
+// 每 60 秒檢查一次 MongoDB 是否存在應該清除的舊房間。
+const ABANDONED_ROOM_CHECK_INTERVAL_MS = 60 * 1000;
+
+// 相容舊版房間資料：
+// 舊資料沒有 bothOfflineSince 欄位。
+// 如果超過 15 分鐘沒有任何心跳或活動，也自動清除。
+const LEGACY_STALE_ROOM_TIMEOUT_MS = 15 * 60 * 1000;
 
 // active_rooms 24 小時未更新後自動清除。
 const ACTIVE_ROOM_TTL_MS = 24 * 60 * 60 * 1000;
@@ -100,7 +128,8 @@ const moveSchema = new mongoose.Schema(
     y: { type: Number, required: true },
     color: { type: String, enum: ["black", "white"], required: true },
     playerName: { type: String, required: true },
-    createdAt: { type: Date, default: Date.now }
+    createdAt: { type: Date, default: Date.now },
+    collapsed: { type: Boolean, default: false }
   },
   { _id: false }
 );
@@ -110,6 +139,14 @@ const gameSchema = new mongoose.Schema(
     roomId: { type: String, required: true, unique: true, index: true },
     seriesId: { type: String, required: true, index: true },
     round: { type: Number, default: 1 },
+    mode: {
+      type: String,
+      enum: [GAME_MODE_STANDARD, GAME_MODE_BATTLE_ROYALE],
+      default: GAME_MODE_STANDARD
+    },
+    shrinkLevel: { type: Number, default: 0 },
+    activeMin: { type: Number, default: 0 },
+    activeMax: { type: Number, default: BOARD_SIZE - 1 },
     players: { type: [historyPlayerSchema], default: [] },
     board: { type: [Number], default: () => Array(BOARD_CELL_COUNT).fill(0) },
     currentTurn: { type: String, enum: ["black", "white"], default: "black" },
@@ -203,16 +240,33 @@ const activeRoomSchema = new mongoose.Schema(
     roomId: { type: String, required: true, unique: true, index: true },
     seriesId: { type: String, required: true, index: true },
     round: { type: Number, default: 1 },
+    mode: {
+      type: String,
+      enum: [GAME_MODE_STANDARD, GAME_MODE_BATTLE_ROYALE],
+      default: GAME_MODE_STANDARD
+    },
+    shrinkLevel: { type: Number, default: 0 },
+    activeMin: { type: Number, default: 0 },
+    activeMax: { type: Number, default: BOARD_SIZE - 1 },
+    movesSinceLastShrink: { type: Number, default: 0 },
+    nextShrinkAt: { type: Date, default: null },
     players: { type: [activePlayerSchema], default: [] },
     board: { type: [Number], default: () => Array(BOARD_CELL_COUNT).fill(0) },
     currentTurn: { type: String, enum: ["black", "white"], default: "black" },
     status: { type: String, enum: ["playing"], default: "playing" },
     moves: { type: [moveSchema], default: [] },
     roomChatMessages: { type: [roomMessageSchema], default: [] },
-    lastActivityAt: { type: Date, default: Date.now },
+lastActivityAt: { type: Date, default: Date.now },
 
-    // expires: 0 代表以此欄位記錄的時間點為到期時間。
-    expiresAt: { type: Date, required: true, index: { expires: 0 } }
+// 當兩位玩家都離線時，記錄開始時間。
+// 若其中一人重新連線，會重新設為 null。
+bothOfflineSince: {
+  type: Date,
+  default: null
+},
+
+// expires: 0 代表以此欄位記錄的時間點為到期時間。
+expiresAt: { type: Date, required: true, index: { expires: 0 } }
   },
   {
     timestamps: true,
@@ -282,6 +336,12 @@ function cleanChatMessage(value, maxLength = 120) {
   return String(value || "").trim().slice(0, maxLength);
 }
 
+function cleanGameMode(value) {
+  return value === GAME_MODE_BATTLE_ROYALE
+    ? GAME_MODE_BATTLE_ROYALE
+    : GAME_MODE_STANDARD;
+}
+
 function getBoardIndex(x, y) {
   return y * BOARD_SIZE + x;
 }
@@ -299,6 +359,68 @@ function isValidPosition(x, y) {
 
 function getOppositeColor(color) {
   return color === "black" ? "white" : "black";
+}
+
+function isBattleRoyaleRoom(room) {
+  return room?.mode === GAME_MODE_BATTLE_ROYALE;
+}
+
+function getActiveBoardSize(room) {
+  return room.activeMax - room.activeMin + 1;
+}
+
+function isPositionActive(room, x, y) {
+  return (
+    isValidPosition(x, y) &&
+    x >= room.activeMin &&
+    x <= room.activeMax &&
+    y >= room.activeMin &&
+    y <= room.activeMax
+  );
+}
+
+function hasAvailableCell(room) {
+  for (let y = room.activeMin; y <= room.activeMax; y += 1) {
+    for (let x = room.activeMin; x <= room.activeMax; x += 1) {
+      if (room.board[getBoardIndex(x, y)] === 0) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function getLatestVisibleMove(room) {
+  for (let index = room.moves.length - 1; index >= 0; index -= 1) {
+    const move = room.moves[index];
+
+    if (!move.collapsed && isPositionActive(room, move.x, move.y)) {
+      return move;
+    }
+  }
+
+  return null;
+}
+
+function clearBattleRoyaleTimer(room) {
+  if (room?.shrinkTimer) {
+    clearTimeout(room.shrinkTimer);
+    room.shrinkTimer = null;
+  }
+}
+
+function areAllPlayersConnected(room) {
+  return room?.players?.length === 2 && room.players.every((player) => player.connected);
+}
+
+function pauseBattleRoyaleShrink(room) {
+  if (!isBattleRoyaleRoom(room)) {
+    return;
+  }
+
+  clearBattleRoyaleTimer(room);
+  room.nextShrinkAt = null;
 }
 
 function getPlayerBySocketId(room, socketId) {
@@ -647,6 +769,12 @@ function toActiveRoomDocument(room) {
     roomId: room.roomId,
     seriesId: room.seriesId,
     round: room.round,
+    mode: room.mode,
+    shrinkLevel: room.shrinkLevel,
+    activeMin: room.activeMin,
+    activeMax: room.activeMax,
+    movesSinceLastShrink: room.movesSinceLastShrink,
+    nextShrinkAt: room.nextShrinkAt,
     players: room.players.map((player) => ({
       playerToken: player.playerToken,
       name: player.name,
@@ -658,6 +786,7 @@ function toActiveRoomDocument(room) {
     moves: room.moves,
     roomChatMessages: room.roomChatMessages.slice(-ROOM_CHAT_LIMIT),
     lastActivityAt: new Date(),
+    bothOfflineSince: room.bothOfflineSince || null,
     expiresAt: createExpiryDate()
   };
 }
@@ -718,11 +847,154 @@ async function touchActiveRoomPresence(
   );
 }
 
+function scheduleBattleRoyaleShrink(room) {
+  clearBattleRoyaleTimer(room);
+
+  if (
+    !isBattleRoyaleRoom(room) ||
+    room.status !== "playing" ||
+    !areAllPlayersConnected(room) ||
+    getActiveBoardSize(room) <= BATTLE_ROYALE_MIN_BOARD_SIZE
+  ) {
+    room.nextShrinkAt = null;
+    return;
+  }
+
+  const targetTime = room.nextShrinkAt
+    ? new Date(room.nextShrinkAt).getTime()
+    : Date.now() + BATTLE_ROYALE_SHRINK_INTERVAL_MS;
+
+  room.nextShrinkAt = new Date(targetTime);
+
+  room.shrinkTimer = setTimeout(() => {
+    shrinkBattleRoyaleRoom(room, "time").catch((error) => {
+      console.error("❌ 大逃殺模式定時縮圈失敗：", error.message);
+    });
+  }, Math.max(0, targetTime - Date.now()));
+}
+
+function getCollapseRing(room) {
+  const positions = [];
+  const min = room.activeMin;
+  const max = room.activeMax;
+
+  for (let value = min; value <= max; value += 1) {
+    positions.push({ x: value, y: min });
+
+    if (max !== min) {
+      positions.push({ x: value, y: max });
+    }
+  }
+
+  for (let value = min + 1; value < max; value += 1) {
+    positions.push({ x: min, y: value });
+    positions.push({ x: max, y: value });
+  }
+
+  return positions;
+}
+
+async function shrinkBattleRoyaleRoom(room, trigger = "time") {
+  if (
+    !room ||
+    !rooms.has(room.roomId) ||
+    room.status !== "playing" ||
+    !isBattleRoyaleRoom(room) ||
+    room.shrinking ||
+    getActiveBoardSize(room) <= BATTLE_ROYALE_MIN_BOARD_SIZE
+  ) {
+    return;
+  }
+
+  room.shrinking = true;
+  clearBattleRoyaleTimer(room);
+
+  if (room.undoRequest) {
+    room.undoRequest = null;
+    io.to(room.roomId).emit("undoStatus", { status: "resolved" });
+    io.to(room.roomId).emit("undoResolved", { accepted: false });
+  }
+
+  const boardBefore = [...room.board];
+  const collapsedPositions = getCollapseRing(room);
+  const collapsedKeys = new Set(
+    collapsedPositions.map((position) => `${position.x},${position.y}`)
+  );
+
+  for (const position of collapsedPositions) {
+    room.board[getBoardIndex(position.x, position.y)] = 0;
+  }
+
+  room.moves.forEach((move) => {
+    if (collapsedKeys.has(`${move.x},${move.y}`)) {
+      move.collapsed = true;
+    }
+  });
+
+  room.activeMin += 1;
+  room.activeMax -= 1;
+  room.shrinkLevel += 1;
+  room.movesSinceLastShrink = 0;
+  room.nextShrinkAt =
+    getActiveBoardSize(room) > BATTLE_ROYALE_MIN_BOARD_SIZE
+      ? new Date(Date.now() + BATTLE_ROYALE_SHRINK_INTERVAL_MS)
+      : null;
+
+  await persistActiveRoom(room);
+
+  const payload = {
+    roomId: room.roomId,
+    trigger,
+    collapsedPositions,
+    boardBefore,
+    boardAfter: [...room.board],
+    shrinkLevel: room.shrinkLevel,
+    activeMin: room.activeMin,
+    activeMax: room.activeMax,
+    activeBoardSize: getActiveBoardSize(room),
+    nextShrinkAt: room.nextShrinkAt,
+    movesUntilShrink: BATTLE_ROYALE_MOVES_PER_SHRINK
+  };
+
+  io.to(room.roomId).emit("boardShrink", payload);
+  io.to(getSpectatorChannel(room.roomId)).emit("boardShrink", payload);
+
+  await emitSystemRoomMessage(
+    room,
+    `⚔️ 棋盤外圈已崩塌，目前剩下 ${payload.activeBoardSize} × ${payload.activeBoardSize}。`
+  );
+
+  setTimeout(async () => {
+    if (!rooms.has(room.roomId) || room.status !== "playing") {
+      return;
+    }
+
+    room.shrinking = false;
+    emitRoomState(room);
+
+    if (!hasAvailableCell(room)) {
+      await finalizeRoom(room, "draw", "draw");
+      return;
+    }
+
+    scheduleBattleRoyaleShrink(room);
+    await broadcastSpectatableRooms();
+  }, BATTLE_ROYALE_ANIMATION_MS);
+}
+
 function restoreRoomFromActiveDocument(document) {
   return {
     roomId: document.roomId,
     seriesId: document.seriesId,
     round: document.round,
+    mode: cleanGameMode(document.mode),
+    shrinkLevel: Number(document.shrinkLevel || 0),
+    activeMin: Number(document.activeMin || 0),
+    activeMax: Number.isInteger(document.activeMax) ? document.activeMax : BOARD_SIZE - 1,
+    movesSinceLastShrink: Number(document.movesSinceLastShrink || 0),
+    nextShrinkAt: document.nextShrinkAt || null,
+    shrinkTimer: null,
+    shrinking: false,
     board: [...document.board],
     players: document.players.map((player) => ({
       socketId: null,
@@ -742,7 +1014,8 @@ function restoreRoomFromActiveDocument(document) {
       y: move.y,
       color: move.color,
       playerName: move.playerName,
-      createdAt: move.createdAt
+      createdAt: move.createdAt,
+      collapsed: Boolean(move.collapsed)
     })),
     roomChatMessages: document.roomChatMessages.map((item) => ({
       type: item.type,
@@ -754,6 +1027,7 @@ function restoreRoomFromActiveDocument(document) {
     rematchVotes: new Set(),
     rematchStarting: false,
     finalized: false,
+    bothOfflineSince: document.bothOfflineSince || null,
     startedAt: document.createdAt || new Date()
   };
 }
@@ -762,6 +1036,13 @@ async function getOrRestoreRoom(roomId) {
   const inMemoryRoom = rooms.get(roomId);
 
   if (inMemoryRoom) {
+    // 房間仍在 Node.js 記憶體中，
+    // 但雙方都已經離線超過 3 分鐘。
+    if (isBothOfflineExpired(inMemoryRoom)) {
+      await abandonRoom(roomId);
+      return null;
+    }
+
     return inMemoryRoom;
   }
 
@@ -772,6 +1053,13 @@ async function getOrRestoreRoom(roomId) {
   }).lean();
 
   if (!document) {
+    return null;
+  }
+
+  // Render 重啟後，必須先檢查 MongoDB 保存的雙方離線時間。
+  // 已超過限制就不能再恢復舊棋盤。
+  if (isBothOfflineExpired(document)) {
+    await abandonRoom(roomId);
     return null;
   }
 
@@ -817,6 +1105,8 @@ async function getSpectatableRooms() {
     return {
       roomId: room.roomId,
       round: room.round,
+      mode: cleanGameMode(room.mode),
+      activeBoardSize: Number(room.activeMax ?? BOARD_SIZE - 1) - Number(room.activeMin ?? 0) + 1,
       blackPlayer: blackPlayer?.name || "黑棋玩家",
       whitePlayer: whitePlayer?.name || "白棋玩家",
       currentTurn: room.currentTurn,
@@ -835,12 +1125,21 @@ async function broadcastSpectatableRooms() {
 // 房間狀態與房間聊天室
 // ==========================================
 function buildRoomState(room) {
-  const lastMove = room.moves[room.moves.length - 1] || null;
+  const lastMove = getLatestVisibleMove(room);
 
   return {
     roomId: room.roomId,
     seriesId: room.seriesId,
     round: room.round,
+    mode: room.mode,
+    shrinkLevel: room.shrinkLevel,
+    activeMin: room.activeMin,
+    activeMax: room.activeMax,
+    activeBoardSize: getActiveBoardSize(room),
+    movesSinceLastShrink: room.movesSinceLastShrink,
+    movesUntilShrink: Math.max(0, BATTLE_ROYALE_MOVES_PER_SHRINK - room.movesSinceLastShrink),
+    nextShrinkAt: room.nextShrinkAt,
+    shrinking: Boolean(room.shrinking),
     board: room.board,
     players: room.players.map((player) => ({
       name: player.name,
@@ -899,6 +1198,10 @@ function toHistoryDocument(room) {
     roomId: room.roomId,
     seriesId: room.seriesId,
     round: room.round,
+    mode: room.mode,
+    shrinkLevel: room.shrinkLevel,
+    activeMin: room.activeMin,
+    activeMax: room.activeMax,
     players: room.players.map((player) => ({
       name: player.name,
       color: player.color
@@ -928,6 +1231,7 @@ async function finalizeRoom(room, winner, reason, options = {}) {
   room.undoRequest = null;
 
   room.players.forEach(clearPlayerDisconnectTimer);
+  clearBattleRoyaleTimer(room);
 
   await Game.updateOne(
     { roomId: room.roomId },
@@ -986,11 +1290,23 @@ async function startGame(player1, player2, options = {}) {
   const seriesId = options.seriesId || generateSeriesId();
   const round = options.round || 1;
   const startEventName = options.startEventName || "gameStarted";
+  const mode = cleanGameMode(options.mode);
 
   const room = {
     roomId,
     seriesId,
     round,
+    mode,
+    shrinkLevel: 0,
+    activeMin: 0,
+    activeMax: BOARD_SIZE - 1,
+    movesSinceLastShrink: 0,
+    nextShrinkAt:
+      mode === GAME_MODE_BATTLE_ROYALE
+        ? new Date(Date.now() + BATTLE_ROYALE_SHRINK_INTERVAL_MS)
+        : null,
+    shrinkTimer: null,
+    shrinking: false,
     board: Array(BOARD_CELL_COUNT).fill(0),
     players: [
       createLivePlayer(player1, options.player1Color || "black"),
@@ -1004,9 +1320,13 @@ async function startGame(player1, player2, options = {}) {
     roomChatMessages: (options.roomChatMessages || []).slice(-ROOM_CHAT_LIMIT),
     undoRequest: null,
     rematchVotes: new Set(),
-    rematchStarting: false,
-    finalized: false,
-    startedAt: new Date()
+rematchStarting: false,
+finalized: false,
+
+// 新房間一開始兩位玩家都在線，因此設為 null。
+bothOfflineSince: null,
+
+startedAt: new Date()
   };
 
   rooms.set(roomId, room);
@@ -1020,18 +1340,25 @@ async function startGame(player1, player2, options = {}) {
   }
 
   await persistActiveRoom(room);
+  scheduleBattleRoyaleShrink(room);
 
   for (const player of room.players) {
     io.to(player.socketId).emit(startEventName, {
       roomId,
       seriesId,
       round,
+      mode: room.mode,
       myColor: player.color
     });
   }
 
   emitRoomState(room);
-  await emitSystemRoomMessage(room, `第 ${round} 局開始，黑棋先行。`);
+  await emitSystemRoomMessage(
+    room,
+    mode === GAME_MODE_BATTLE_ROYALE
+      ? `第 ${round} 局開始：⚔️ 大逃殺模式。每 60 秒或每 10 手會縮小一圈，黑棋先行。`
+      : `第 ${round} 局開始，黑棋先行。`
+  );
   await broadcastSpectatableRooms();
 
   console.log(`🎮 房間建立成功：${roomId}`);
@@ -1067,6 +1394,7 @@ async function startRematch(oldRoom) {
       player1Color: "white",
       player2Color: "black",
       roomChatMessages: oldRoom.roomChatMessages,
+      mode: oldRoom.mode,
       startEventName: "rematchStarted"
     }
   );
@@ -1075,12 +1403,128 @@ async function startRematch(oldRoom) {
     player.socket?.leave(oldRoomId);
   }
 
+  clearBattleRoyaleTimer(oldRoom);
   rooms.delete(oldRoomId);
 
   io.to(newRoom.roomId).emit("chatHistory", newRoom.roomChatMessages);
   console.log(`🔄 同一組玩家開始第 ${newRoom.round} 局：${newRoom.roomId}`);
 }
+// ==========================================
+// 雙方同時離線：自動放棄棋局
+// ==========================================
 
+function areBothPlayersOffline(room) {
+  return (
+    room &&
+    room.players.length === 2 &&
+    room.players.every((player) => !player.connected)
+  );
+}
+
+function isBothOfflineExpired(roomOrDocument) {
+  const bothOfflineSince = roomOrDocument?.bothOfflineSince;
+
+  if (!bothOfflineSince) {
+    return false;
+  }
+
+  const offlineDuration =
+    Date.now() - new Date(bothOfflineSince).getTime();
+
+  return offlineDuration >= BOTH_OFFLINE_TIMEOUT_MS;
+}
+
+// 雙方都離線時，不判定任何人獲勝。
+// 直接刪除 active_rooms，避免下次進入網站又恢復舊棋盤。
+async function abandonRoom(roomId) {
+  const room = rooms.get(roomId);
+
+  if (room) {
+    room.players.forEach(clearPlayerDisconnectTimer);
+
+    room.status = "abandoned";
+    room.winner = null;
+    room.reason = "both-offline-timeout";
+
+    // 理論上雙方都已離線，但仍保留事件，
+    // 避免剛好有舊分頁尚未完全關閉。
+    io.to(room.roomId).emit("roomExpired", {
+      message: "雙方離線超過 3 分鐘，本局已自動結束。"
+    });
+
+    closeSpectatorsForRoom(room, {
+      message: "雙方玩家皆已離線，本次觀戰已結束。"
+    });
+
+    rooms.delete(roomId);
+  }
+
+  await ActiveRoom.deleteOne({ roomId });
+
+  console.log(`🧹 雙方離線過久，已清除房間：${roomId}`);
+}
+
+// 建立或保留單一玩家的 3 分鐘離線計時器。
+function scheduleDisconnectTimeout(room, player) {
+  if (!room || !player || player.connected || player.disconnectTimer) {
+    return;
+  }
+
+  player.disconnectTimer = setTimeout(() => {
+    finalizeDisconnectedRoom(room, player).catch((error) => {
+      console.error("❌ 離線逾時處理失敗：", error.message);
+    });
+  }, DISCONNECT_GRACE_PERIOD_MS);
+}
+
+// 即使 Render 重啟導致記憶體中的 setTimeout 消失，
+// 仍可透過 MongoDB 保存的時間清除舊房間。
+async function cleanupAbandonedRooms() {
+  if (!isMongoConnected()) {
+    return;
+  }
+
+  const bothOfflineCutoff =
+    new Date(Date.now() - BOTH_OFFLINE_TIMEOUT_MS);
+
+  const legacyStaleCutoff =
+    new Date(Date.now() - LEGACY_STALE_ROOM_TIMEOUT_MS);
+
+  const abandonedRooms = await ActiveRoom.find({
+    status: "playing",
+
+    $or: [
+      // 新版房間：雙方離線滿 3 分鐘。
+      {
+        bothOfflineSince: {
+          $ne: null,
+          $lte: bothOfflineCutoff
+        }
+      },
+
+      // 舊版房間：沒有 bothOfflineSince 欄位，
+      // 但超過 15 分鐘沒有任何活動。
+      {
+        bothOfflineSince: null,
+        lastActivityAt: {
+          $lte: legacyStaleCutoff
+        }
+      }
+    ]
+  })
+    .select({ roomId: 1 })
+    .lean();
+
+  if (abandonedRooms.length === 0) {
+    return;
+  }
+
+  for (const item of abandonedRooms) {
+    await abandonRoom(item.roomId);
+  }
+
+  await broadcastSpectatableRooms();
+}
 // ==========================================
 // 玩家離線逾時
 // ==========================================
@@ -1089,6 +1533,25 @@ async function finalizeDisconnectedRoom(room, disconnectedPlayer) {
     return;
   }
 
+  // ========================================
+  // 狀況 1：雙方都離線
+  // ========================================
+  // 不判定勝負，不計算積分。
+  // 必須等到「雙方同時離線」滿 3 分鐘後再刪除。
+  if (areBothPlayersOffline(room)) {
+    if (isBothOfflineExpired(room)) {
+      await abandonRoom(room.roomId);
+      await broadcastSpectatableRooms();
+    }
+
+    return;
+  }
+
+  // ========================================
+  // 狀況 2：只有一位玩家離線
+  // ========================================
+  // 保留原本規則：
+  // 離線玩家超過 3 分鐘沒有回來，對手獲勝。
   const opponent = room.players.find(
     (player) => player.playerToken !== disconnectedPlayer.playerToken
   );
@@ -1111,7 +1574,6 @@ async function finalizeDisconnectedRoom(room, disconnectedPlayer) {
     rooms.delete(room.roomId);
   }
 }
-
 // ==========================================
 // Socket.IO
 // ==========================================
@@ -1306,6 +1768,7 @@ io.on("connection", (socket) => {
   socket.on("joinQueue", async (data) => {
     const name = cleanPlayerName(data?.name);
     const playerToken = cleanPlayerToken(data?.playerToken);
+    const mode = cleanGameMode(data?.mode);
 
     if (!name || !playerToken) {
       socket.emit("errorMessage", "玩家名稱或識別碼遺失，請重新整理頁面");
@@ -1318,7 +1781,7 @@ io.on("connection", (socket) => {
     socket.data.displayName = name;
     socket.data.playerToken = playerToken;
 
-    waitingPlayers.push({ socketId: socket.id, socket, name, playerToken });
+    waitingPlayers.push({ socketId: socket.id, socket, name, playerToken, mode });
 
     socket.emit("queueStatus", {
       message: "正在等待另一位快速配對玩家加入..."
@@ -1327,7 +1790,10 @@ io.on("connection", (socket) => {
     // 尋找 Token 不同的兩位玩家，避免同一個瀏覽器誤配自己。
     for (let i = 0; i < waitingPlayers.length; i += 1) {
       for (let j = i + 1; j < waitingPlayers.length; j += 1) {
-        if (waitingPlayers[i].playerToken === waitingPlayers[j].playerToken) {
+        if (
+          waitingPlayers[i].playerToken === waitingPlayers[j].playerToken ||
+          waitingPlayers[i].mode !== waitingPlayers[j].mode
+        ) {
           continue;
         }
 
@@ -1335,7 +1801,7 @@ io.on("connection", (socket) => {
         const player1 = waitingPlayers.splice(i, 1)[0];
 
         try {
-          await startGame(player1, player2);
+          await startGame(player1, player2, { mode: player1.mode });
         } catch (error) {
           console.error("❌ 建立快速配對失敗：", error.message);
           io.to(player1.socketId).emit("errorMessage", "建立對局失敗，請重新配對");
@@ -1361,6 +1827,7 @@ io.on("connection", (socket) => {
   socket.on("createPrivateRoom", (data) => {
     const name = cleanPlayerName(data?.name);
     const playerToken = cleanPlayerToken(data?.playerToken);
+    const mode = cleanGameMode(data?.mode);
 
     if (!name || !playerToken) {
       socket.emit("privateRoomError", "玩家名稱或識別碼遺失，請重新整理頁面");
@@ -1376,6 +1843,7 @@ io.on("connection", (socket) => {
     waitingPrivateRooms.set(roomCode, {
       roomCode,
       creator,
+      mode,
       createdAt: Date.now()
     });
 
@@ -1383,7 +1851,7 @@ io.on("connection", (socket) => {
     socket.data.playerToken = playerToken;
     socket.data.privateRoomCode = roomCode;
 
-    socket.emit("privateRoomCreated", { roomCode });
+    socket.emit("privateRoomCreated", { roomCode, mode });
     console.log(`🔐 私人房間已建立：${roomCode}，建立者：${name}`);
   });
 
@@ -1440,6 +1908,8 @@ io.on("connection", (socket) => {
         socket,
         name,
         playerToken
+      }, {
+        mode: privateRoom.mode
       });
 
       console.log(`🔓 私人房間 ${roomCode} 開始對局`);
@@ -1493,21 +1963,35 @@ io.on("connection", (socket) => {
 
       removeSpectator(socket, { broadcast: false });
 
-      player.socketId = socket.id;
-      player.socket = socket;
-      player.connected = true;
+player.socketId = socket.id;
+player.socket = socket;
+player.connected = true;
 
-      socket.data.roomId = roomId;
+// 只要其中一位玩家重新連線，就不再視為雙方離線。
+room.bothOfflineSince = null;
+
+socket.data.roomId = roomId;
       socket.data.playerToken = playerToken;
       socket.data.displayName = player.name;
       socket.join(roomId);
 
+      if (isBattleRoyaleRoom(room) && areAllPlayersConnected(room)) {
+        room.nextShrinkAt = new Date(Date.now() + BATTLE_ROYALE_SHRINK_INTERVAL_MS);
+        scheduleBattleRoyaleShrink(room);
+      }
+
       await persistActiveRoom(room);
+      // Render 重啟後，記憶體中的離線計時器會消失。
+// 因此恢復房間時，幫尚未回來的玩家重新建立 3 分鐘計時器。
+for (const offlinePlayer of room.players.filter((item) => !item.connected)) {
+  scheduleDisconnectTimeout(room, offlinePlayer);
+}
 
       socket.emit("gameResumed", {
         roomId: room.roomId,
         seriesId: room.seriesId,
         round: room.round,
+        mode: room.mode,
         myColor: player.color,
         status: room.status
       });
@@ -1559,6 +2043,11 @@ io.on("connection", (socket) => {
       return;
     }
 
+    if (room.shrinking) {
+      socket.emit("errorMessage", "棋盤正在崩塌，請稍候再落子");
+      return;
+    }
+
     if (room.currentTurn !== player.color) {
       socket.emit("errorMessage", "現在還沒輪到您");
       return;
@@ -1567,8 +2056,8 @@ io.on("connection", (socket) => {
     const x = Number(data?.x);
     const y = Number(data?.y);
 
-    if (!isValidPosition(x, y)) {
-      socket.emit("errorMessage", "落子位置錯誤");
+    if (!isValidPosition(x, y) || !isPositionActive(room, x, y)) {
+      socket.emit("errorMessage", "此位置已經崩塌，請在目前有效棋盤內落子");
       return;
     }
 
@@ -1587,11 +2076,12 @@ io.on("connection", (socket) => {
       y,
       color: player.color,
       playerName: player.name,
-      createdAt: new Date()
+      createdAt: new Date(),
+      collapsed: false
     });
 
     const hasWinner = checkWin(room.board, x, y, stoneValue);
-    const isDraw = !hasWinner && room.board.every((cell) => cell !== 0);
+    const isDraw = !hasWinner && !hasAvailableCell(room);
 
     if (hasWinner) {
       await finalizeRoom(room, player.color, "five-in-row");
@@ -1605,10 +2095,21 @@ io.on("connection", (socket) => {
 
     room.currentTurn = getOppositeColor(player.color);
 
+    if (isBattleRoyaleRoom(room)) {
+      room.movesSinceLastShrink += 1;
+    }
+
     try {
       await persistActiveRoom(room);
       emitRoomState(room);
       await broadcastSpectatableRooms();
+
+      if (
+        isBattleRoyaleRoom(room) &&
+        room.movesSinceLastShrink >= BATTLE_ROYALE_MOVES_PER_SHRINK
+      ) {
+        await shrinkBattleRoyaleRoom(room, "moves");
+      }
     } catch (error) {
       console.error("❌ 儲存進行中棋局失敗：", error.message);
       socket.emit("errorMessage", "棋局保存失敗，請稍後再試");
@@ -1640,7 +2141,12 @@ io.on("connection", (socket) => {
       return;
     }
 
-    if (!lastMove || lastMove.color !== player.color) {
+    if (
+      !lastMove ||
+      lastMove.collapsed ||
+      !isPositionActive(room, lastMove.x, lastMove.y) ||
+      lastMove.color !== player.color
+    ) {
       socket.emit("errorMessage", "只能撤回自己剛剛落下的最後一步");
       return;
     }
@@ -1696,6 +2202,10 @@ io.on("connection", (socket) => {
 
     room.board[getBoardIndex(removedMove.x, removedMove.y)] = 0;
     room.currentTurn = removedMove.color;
+
+    if (isBattleRoyaleRoom(room)) {
+      room.movesSinceLastShrink = Math.max(0, room.movesSinceLastShrink - 1);
+    }
     room.undoRequest = null;
 
     try {
@@ -1881,23 +2391,39 @@ io.on("connection", (socket) => {
       return;
     }
 
-    player.connected = false;
-    player.socket = null;
+player.connected = false;
+player.socket = null;
 
-    clearPlayerDisconnectTimer(player);
+clearPlayerDisconnectTimer(player);
 
-    if (room.status === "playing") {
-      await emitSystemRoomMessage(room, `${player.name} 暫時離線，系統將保留棋局 3 分鐘。`);
-      emitRoomState(room);
-
-      player.disconnectTimer = setTimeout(() => {
-        finalizeDisconnectedRoom(room, player).catch((error) => {
-          console.error("❌ 離線逾時處理失敗：", error.message);
-        });
-      }, DISCONNECT_GRACE_PERIOD_MS);
-    } else {
-      rooms.delete(roomId);
+if (room.status === "playing") {
+  // 如果兩位玩家都已經離線，開始記錄雙方離線時間。
+  if (areBothPlayersOffline(room)) {
+    if (!room.bothOfflineSince) {
+      room.bothOfflineSince = new Date();
     }
+
+    await emitSystemRoomMessage(
+      room,
+      "雙方玩家皆已離線。若 3 分鐘內無人重新連線，本局將自動結束。"
+    );
+  } else {
+    // 仍有一人在線，不算雙方同時離線。
+    room.bothOfflineSince = null;
+
+    await emitSystemRoomMessage(
+      room,
+      `${player.name} 暫時離線，系統將保留棋局 3 分鐘。`
+    );
+  }
+
+  emitRoomState(room);
+
+  // 單一玩家離線或雙方離線都先建立計時器。
+  scheduleDisconnectTimeout(room, player);
+} else {
+  rooms.delete(roomId);
+}
   });
 });
 
@@ -1945,13 +2471,15 @@ app.get("/api/active-rooms", async (_req, res) => {
   try {
     const activeRooms = await ActiveRoom.find({ status: "playing" })
       .sort({ updatedAt: -1 })
-      .select({ roomId: 1, seriesId: 1, round: 1, players: 1, currentTurn: 1, updatedAt: 1 })
+      .select({ roomId: 1, seriesId: 1, round: 1, mode: 1, activeMin: 1, activeMax: 1, players: 1, currentTurn: 1, updatedAt: 1 })
       .lean();
 
     const safeRooms = activeRooms.map((room) => ({
       roomId: room.roomId,
       seriesId: room.seriesId,
       round: room.round,
+      mode: cleanGameMode(room.mode),
+      activeBoardSize: Number(room.activeMax ?? BOARD_SIZE - 1) - Number(room.activeMin ?? 0) + 1,
       currentTurn: room.currentTurn,
       updatedAt: room.updatedAt,
       players: room.players.map((player) => ({
@@ -1997,6 +2525,17 @@ setInterval(() => {
       );
     });
 }, 60 * 1000);
+// ==========================================
+// 每分鐘清除雙方離線過久或舊版殘留房間
+// ==========================================
+setInterval(() => {
+  cleanupAbandonedRooms().catch((error) => {
+    console.error(
+      "❌ 自動清理離線房間失敗：",
+      error.message
+    );
+  });
+}, ABANDONED_ROOM_CHECK_INTERVAL_MS);
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log("🚀 Server 已啟動");
   console.log(`🌐 本機網址：http://localhost:${PORT}`);

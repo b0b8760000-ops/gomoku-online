@@ -46,6 +46,16 @@
             autocomplete="nickname"
           />
 
+          <label for="gameModeSelect">玩法模式</label>
+          <select id="gameModeSelect" class="modeSelect">
+            <option value="standard">經典模式｜標準 15 × 15 五子棋</option>
+            <option value="battle-royale">⚔️ 大逃殺模式｜定時縮圈</option>
+          </select>
+
+          <div id="modeDescription" class="modeDescription">
+            標準 15 × 15 棋盤，先完成五子連線即可獲勝。
+          </div>
+
           <button id="joinButton" type="button" class="primaryButton">
             快速配對
           </button>
@@ -103,8 +113,20 @@
           </div>
 
           <div class="infoRow">
+            <span>玩法模式</span>
+            <strong id="gameModeText">經典模式</strong>
+          </div>
+
+          <div class="infoRow">
             <span>目前狀態</span>
             <strong id="statusText">等待中</strong>
+          </div>
+
+          <div id="battleRoyaleInfo" class="battleRoyaleInfo hidden">
+            <div class="battleRoyaleTitle">⚔️ 大逃殺縮圈資訊</div>
+            <p id="battleRoyaleBoardSize">有效棋盤：15 × 15</p>
+            <p id="battleRoyaleCountdown">下一次縮圈：等待同步</p>
+            <p id="battleRoyaleMoves">回合觸發：再 10 手縮圈</p>
           </div>
 
           <div class="infoRow">
@@ -181,8 +203,20 @@
           </div>
 
           <div class="infoRow">
+            <span>玩法模式</span>
+            <strong id="spectatorGameModeText">經典模式</strong>
+          </div>
+
+          <div class="infoRow">
             <span>目前狀態</span>
             <strong id="spectatorTurn">等待資料</strong>
+          </div>
+
+          <div id="spectatorBattleRoyaleInfo" class="battleRoyaleInfo hidden">
+            <div class="battleRoyaleTitle">⚔️ 大逃殺縮圈資訊</div>
+            <p id="spectatorBattleRoyaleBoardSize">有效棋盤：15 × 15</p>
+            <p id="spectatorBattleRoyaleCountdown">下一次縮圈：等待同步</p>
+            <p id="spectatorBattleRoyaleMoves">回合觸發：再 10 手縮圈</p>
           </div>
 
           <div class="infoRow">

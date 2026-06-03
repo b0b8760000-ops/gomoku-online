@@ -8,6 +8,9 @@ const socket = io({
 
 const BOARD_SIZE = 15;
 const BOARD_CELL_COUNT = BOARD_SIZE * BOARD_SIZE;
+const GAME_MODE_STANDARD = "standard";
+const GAME_MODE_BATTLE_ROYALE = "battle-royale";
+const BATTLE_ROYALE_ANIMATION_MS = 950;
 const $ = (id) => document.getElementById(id);
 
 // ==========================================
@@ -44,6 +47,15 @@ let currentBoard = Array(BOARD_CELL_COUNT).fill(0);
 let lastMove = null;
 let lastMoveColor = null;
 let undoPending = false;
+let currentGameMode = GAME_MODE_STANDARD;
+let activeMin = 0;
+let activeMax = BOARD_SIZE - 1;
+let activeBoardSize = BOARD_SIZE;
+let nextShrinkAt = null;
+let movesUntilShrink = 10;
+let shrinkingCells = new Set();
+let shrinkAnimationTimer = null;
+let battleRoyaleClockTimer = null;
 let heartbeatTimer = null;
 let toastTimer = null;
 
@@ -59,6 +71,8 @@ const boardHint = $("boardHint");
 const lobbySection = $("lobbySection");
 const gameInfo = $("gameInfo");
 const playerNameInput = $("playerName");
+const gameModeSelect = $("gameModeSelect");
+const modeDescription = $("modeDescription");
 const joinButton = $("joinButton");
 const createPrivateRoomButton = $("createPrivateRoomButton");
 const privateRoomCodeInput = $("privateRoomCodeInput");
@@ -72,6 +86,11 @@ const cancelWaitingButton = $("cancelWaitingButton");
 const roomIdText = $("roomId");
 const myColorText = $("myColor");
 const statusText = $("statusText");
+const gameModeText = $("gameModeText");
+const battleRoyaleInfo = $("battleRoyaleInfo");
+const battleRoyaleBoardSize = $("battleRoyaleBoardSize");
+const battleRoyaleCountdown = $("battleRoyaleCountdown");
+const battleRoyaleMoves = $("battleRoyaleMoves");
 const blackPlayerText = $("blackPlayer");
 const whitePlayerText = $("whitePlayer");
 const lastMoveToggleButton = $("lastMoveToggleButton");
@@ -107,6 +126,11 @@ const spectatorInfo = $("spectatorInfo");
 const spectatorRoomIdText = $("spectatorRoomId");
 const spectatorMatchText = $("spectatorMatch");
 const spectatorTurnText = $("spectatorTurn");
+const spectatorGameModeText = $("spectatorGameModeText");
+const spectatorBattleRoyaleInfo = $("spectatorBattleRoyaleInfo");
+const spectatorBattleRoyaleBoardSize = $("spectatorBattleRoyaleBoardSize");
+const spectatorBattleRoyaleCountdown = $("spectatorBattleRoyaleCountdown");
+const spectatorBattleRoyaleMoves = $("spectatorBattleRoyaleMoves");
 const spectatorCountText = $("spectatorCount");
 const gameSpectatorCountText = $("gameSpectatorCount");
 const leaveSpectatingButton = $("leaveSpectatingButton");
@@ -181,6 +205,7 @@ function clearSpectatingRoomId() {
 }
 
 function setLobbyControlsDisabled(disabled) {
+  gameModeSelect.disabled = disabled;
   joinButton.disabled = disabled;
   createPrivateRoomButton.disabled = disabled;
   privateRoomCodeInput.disabled = disabled;
@@ -211,6 +236,88 @@ function showLobbyWaiting({ title, hint, roomCode = null }) {
   }
 }
 
+function getSelectedGameMode() {
+  return gameModeSelect.value === GAME_MODE_BATTLE_ROYALE
+    ? GAME_MODE_BATTLE_ROYALE
+    : GAME_MODE_STANDARD;
+}
+
+function getGameModeName(mode = currentGameMode) {
+  return mode === GAME_MODE_BATTLE_ROYALE ? "⚔️ 大逃殺模式" : "經典模式";
+}
+
+function updateModeDescription() {
+  modeDescription.textContent =
+    getSelectedGameMode() === GAME_MODE_BATTLE_ROYALE
+      ? "每 60 秒或累積 10 手，最外圈會崩塌並移除該圈棋子。棋盤最低縮至 7 × 7。"
+      : "標準 15 × 15 棋盤，先完成五子連線即可獲勝。";
+}
+
+function isCellActive(x, y) {
+  return x >= activeMin && x <= activeMax && y >= activeMin && y <= activeMax;
+}
+
+function getCellKey(x, y) {
+  return `${x},${y}`;
+}
+
+function formatShrinkCountdown() {
+  if (currentGameMode !== GAME_MODE_BATTLE_ROYALE) {
+    return "";
+  }
+
+  if (!nextShrinkAt) {
+    return "已縮至最小棋盤";
+  }
+
+  const remainingSeconds = Math.max(0, Math.ceil((new Date(nextShrinkAt).getTime() - Date.now()) / 1000));
+  return `${remainingSeconds} 秒`;
+}
+
+function updateBattleRoyalePanel() {
+  const enabled = currentGameMode === GAME_MODE_BATTLE_ROYALE;
+  const modeName = getGameModeName();
+
+  gameModeText.textContent = modeName;
+  spectatorGameModeText.textContent = modeName;
+  battleRoyaleInfo.classList.toggle("hidden", !enabled);
+  spectatorBattleRoyaleInfo.classList.toggle("hidden", !enabled);
+  board.classList.toggle("battleRoyaleBoard", enabled);
+
+  if (!enabled) {
+    return;
+  }
+
+  const boardSizeText = `有效棋盤：${activeBoardSize} × ${activeBoardSize}`;
+  const countdownText = nextShrinkAt
+    ? `下一次縮圈：${formatShrinkCountdown()}`
+    : "下一次縮圈：已縮至最小棋盤";
+  const movesText = nextShrinkAt
+    ? `回合觸發：再 ${movesUntilShrink} 手縮圈`
+    : "回合觸發：已停止縮圈";
+
+  battleRoyaleBoardSize.textContent = boardSizeText;
+  spectatorBattleRoyaleBoardSize.textContent = boardSizeText;
+  battleRoyaleCountdown.textContent = countdownText;
+  spectatorBattleRoyaleCountdown.textContent = countdownText;
+  battleRoyaleMoves.textContent = movesText;
+  spectatorBattleRoyaleMoves.textContent = movesText;
+}
+
+function applyRoomModeState(data = {}) {
+  currentGameMode = data.mode === GAME_MODE_BATTLE_ROYALE
+    ? GAME_MODE_BATTLE_ROYALE
+    : GAME_MODE_STANDARD;
+  activeMin = Number.isInteger(data.activeMin) ? data.activeMin : 0;
+  activeMax = Number.isInteger(data.activeMax) ? data.activeMax : BOARD_SIZE - 1;
+  activeBoardSize = Number.isInteger(data.activeBoardSize)
+    ? data.activeBoardSize
+    : activeMax - activeMin + 1;
+  nextShrinkAt = data.nextShrinkAt || null;
+  movesUntilShrink = Number.isInteger(data.movesUntilShrink) ? data.movesUntilShrink : 10;
+  updateBattleRoyalePanel();
+}
+
 function updateLastMoveToggleButton() {
   const text = showLastMoveHighlight ? "開啟" : "關閉";
 
@@ -228,7 +335,8 @@ function updateUndoButton() {
     gameStatus === "playing" &&
     myColor &&
     lastMoveColor === myColor &&
-    !undoPending;
+    !undoPending &&
+    shrinkingCells.size === 0;
 
   undoButton.disabled = !canRequestUndo;
   undoButton.textContent = undoPending ? "等待悔棋處理..." : "申請悔棋";
@@ -295,7 +403,13 @@ function renderBoard() {
 
     const x = Number(cell.dataset.x);
     const y = Number(cell.dataset.y);
+    const collapsing = shrinkingCells.has(getCellKey(x, y));
+    const active = isCellActive(x, y);
     const value = currentBoard[getIndex(x, y)];
+
+    cell.classList.toggle("collapsed", !active && !collapsing);
+    cell.classList.toggle("collapsing", collapsing);
+    cell.disabled = !active || collapsing;
 
     if (value === 0) {
       return;
@@ -335,6 +449,16 @@ function handleCellClick(x, y) {
 
   if (currentTurn !== myColor) {
     showToast("現在還沒輪到您");
+    return;
+  }
+
+  if (!isCellActive(x, y)) {
+    showToast("這個位置已經崩塌，請在目前有效棋盤內落子");
+    return;
+  }
+
+  if (shrinkingCells.size > 0) {
+    showToast("棋盤正在崩塌，請稍候再落子");
     return;
   }
 
@@ -459,7 +583,10 @@ title.textContent =
   `⚫ 黑棋：${room.blackPlayer}　vs　⚪ 白棋：${room.whitePlayer}`;
 
     const meta = document.createElement("p");
-    meta.textContent = `第 ${room.round} 局｜${room.moveCount} 步｜${room.spectatorCount} 人觀戰`;
+    const modeText = room.mode === GAME_MODE_BATTLE_ROYALE
+      ? `⚔️ 大逃殺 ${room.activeBoardSize || BOARD_SIZE} × ${room.activeBoardSize || BOARD_SIZE}`
+      : "經典模式";
+    meta.textContent = `第 ${room.round} 局｜${modeText}｜${room.moveCount} 步｜${room.spectatorCount} 人觀戰`;
 
     const button = document.createElement("button");
     button.type = "button";
@@ -589,6 +716,15 @@ function resetToHome() {
   lastMove = null;
   lastMoveColor = null;
   undoPending = false;
+  currentGameMode = GAME_MODE_STANDARD;
+  activeMin = 0;
+  activeMax = BOARD_SIZE - 1;
+  activeBoardSize = BOARD_SIZE;
+  nextShrinkAt = null;
+  movesUntilShrink = 10;
+  shrinkingCells.clear();
+  clearTimeout(shrinkAnimationTimer);
+  updateBattleRoyalePanel();
 
   lobbySection.classList.remove("hidden");
   gameInfo.classList.add("hidden");
@@ -661,7 +797,7 @@ joinButton.addEventListener("click", () => {
     hint: "正在等待另一位玩家加入..."
   });
 
-  socket.emit("joinQueue", { name, playerToken });
+  socket.emit("joinQueue", { name, playerToken, mode: getSelectedGameMode() });
 });
 
 createPrivateRoomButton.addEventListener("click", () => {
@@ -674,7 +810,7 @@ createPrivateRoomButton.addEventListener("click", () => {
   }
 
   setLobbyControlsDisabled(true);
-  socket.emit("createPrivateRoom", { name, playerToken });
+  socket.emit("createPrivateRoom", { name, playerToken, mode: getSelectedGameMode() });
 });
 
 joinPrivateRoomButton.addEventListener("click", () => {
@@ -853,7 +989,8 @@ socket.on("privateRoomCreated", (data) => {
     roomCode: data.roomCode
   });
 
-  showToast(`私人房間 ${data.roomCode} 已建立`);
+  const modeText = data.mode === GAME_MODE_BATTLE_ROYALE ? "大逃殺模式" : "經典模式";
+  showToast(`私人房間 ${data.roomCode} 已建立｜${modeText}`);
 });
 
 socket.on("waitingCancelled", () => {
@@ -871,11 +1008,13 @@ socket.on("privateRoomError", (message) => {
 // ==========================================
 socket.on("gameStarted", (data) => {
   resetRoomChat();
+  applyRoomModeState(data);
   enterGame(data);
   showToast("配對成功，遊戲開始");
 });
 
 socket.on("gameResumed", (data) => {
+  applyRoomModeState(data);
   enterGame(data);
   connectionText.textContent = "伺服器連線正常";
   showToast("已從 MongoDB 恢復未完成棋局");
@@ -886,8 +1025,18 @@ socket.on("resumeGameFailed", (message) => {
   resetToHome();
   showResultModal("unavailable", message);
 });
+socket.on("roomExpired", (data) => {
+  clearCurrentRoomId();
+  resetToHome();
+
+  showResultModal(
+    "unavailable",
+    data?.message || "雙方離線過久，本局已自動結束。"
+  );
+});
 
 socket.on("gameState", (data) => {
+  applyRoomModeState(data);
   currentBoard = data.board;
   currentTurn = data.currentTurn;
   gameStatus = data.status;
@@ -912,6 +1061,40 @@ socket.on("gameState", (data) => {
   renderBoard();
   updateTurnText();
   updateUndoButton();
+});
+
+socket.on("boardShrink", (data) => {
+  if (data.roomId !== currentRoomId && data.roomId !== spectatingRoomId) {
+    return;
+  }
+
+  clearTimeout(shrinkAnimationTimer);
+  currentGameMode = GAME_MODE_BATTLE_ROYALE;
+  currentBoard = Array.isArray(data.boardBefore) ? data.boardBefore : currentBoard;
+  shrinkingCells = new Set(
+    (data.collapsedPositions || []).map((position) => getCellKey(position.x, position.y))
+  );
+  nextShrinkAt = data.nextShrinkAt || null;
+  movesUntilShrink = Number.isInteger(data.movesUntilShrink) ? data.movesUntilShrink : 10;
+  updateBattleRoyalePanel();
+  renderBoard();
+  updateUndoButton();
+
+  const triggerText = data.trigger === "moves" ? "累積 10 手" : "倒數結束";
+  showToast(`⚔️ ${triggerText}，外圈正在崩塌！`);
+
+  shrinkAnimationTimer = setTimeout(() => {
+    currentBoard = Array.isArray(data.boardAfter) ? data.boardAfter : currentBoard;
+    activeMin = Number.isInteger(data.activeMin) ? data.activeMin : activeMin;
+    activeMax = Number.isInteger(data.activeMax) ? data.activeMax : activeMax;
+    activeBoardSize = Number.isInteger(data.activeBoardSize)
+      ? data.activeBoardSize
+      : activeMax - activeMin + 1;
+    shrinkingCells.clear();
+    updateBattleRoyalePanel();
+    renderBoard();
+    updateUndoButton();
+  }, BATTLE_ROYALE_ANIMATION_MS);
 });
 
 socket.on("opponentConnectionStatus", (data) => {
@@ -958,6 +1141,7 @@ socket.on("rematchStatus", (data) => {
 
 socket.on("rematchStarted", (data) => {
   resetRoomChat();
+  applyRoomModeState(data);
   enterGame(data);
   currentBoard = Array(BOARD_CELL_COUNT).fill(0);
   currentTurn = "black";
@@ -1026,6 +1210,7 @@ socket.on("spectatorRoomState", (data) => {
   }
 
   enterSpectatorMode(data);
+  applyRoomModeState(data);
   currentBoard = data.board;
   currentTurn = data.currentTurn;
   gameStatus = data.status;
@@ -1077,6 +1262,15 @@ socket.on("errorMessage", (message) => showToast(message));
 // 初始化
 // ==========================================
 playerNameInput.value = localStorage.getItem("gomokuDisplayName") || "";
+gameModeSelect.value = localStorage.getItem("gomokuSelectedGameMode") === GAME_MODE_BATTLE_ROYALE
+  ? GAME_MODE_BATTLE_ROYALE
+  : GAME_MODE_STANDARD;
+gameModeSelect.addEventListener("change", () => {
+  localStorage.setItem("gomokuSelectedGameMode", getSelectedGameMode());
+  updateModeDescription();
+});
+updateModeDescription();
+battleRoyaleClockTimer = setInterval(updateBattleRoyalePanel, 1000);
 createBoard();
 resetLobbyWaitingBox();
 resetRoomChat();
