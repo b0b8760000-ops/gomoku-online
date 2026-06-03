@@ -856,3 +856,119 @@ h2 {
 .hidden {
   display: none !important;
 }
+/* =========================================================
+   木質棋盤美化版
+   僅修改外觀，不影響下棋、觀戰、悔棋與同步功能
+========================================================= */
+
+/* 棋盤外圍容器 */
+.boardScroller {
+  padding: 12px;
+
+  border-radius: 22px;
+
+  background:
+    linear-gradient(
+      145deg,
+      rgba(255, 255, 255, 0.72),
+      rgba(244, 233, 216, 0.74)
+    );
+}
+
+/* 木質棋盤主體 */
+.board {
+  position: relative;
+
+  padding: 22px;
+
+  border: 7px solid #a96f34;
+  border-radius: 20px;
+
+  background:
+    /* 柔和光澤 */
+    radial-gradient(
+      circle at 22% 18%,
+      rgba(255, 235, 184, 0.42),
+      transparent 30%
+    ),
+
+    /* 淡淡木紋 */
+    repeating-linear-gradient(
+      3deg,
+      rgba(112, 69, 28, 0.055) 0px,
+      rgba(112, 69, 28, 0.055) 2px,
+      rgba(255, 221, 155, 0.045) 3px,
+      rgba(255, 221, 155, 0.045) 8px
+    ),
+
+    /* 木板底色 */
+    linear-gradient(
+      145deg,
+      #e2b66e 0%,
+      #d7a65d 46%,
+      #c9914b 100%
+    );
+
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 224, 169, 0.35),
+    inset 0 0 24px rgba(110, 63, 24, 0.16),
+    0 15px 28px rgba(99, 65, 35, 0.2);
+}
+
+/* 每一格必須透明，才能看到木板底色 */
+.cell {
+  background: transparent !important;
+}
+
+/* 棋盤格線 */
+.cell::before,
+.cell::after {
+  background: rgba(82, 54, 30, 0.64);
+}
+
+/* 讓黑棋更有立體感 */
+.stone.black,
+.miniStone.black {
+  background:
+    radial-gradient(
+      circle at 32% 24%,
+      #6b6b6b 0%,
+      #2f2f2f 24%,
+      #111111 68%,
+      #000000 100%
+    );
+
+  box-shadow:
+    0 5px 8px rgba(0, 0, 0, 0.36),
+    inset 1px 1px 3px rgba(255, 255, 255, 0.18);
+}
+
+/* 讓白棋更有立體感 */
+.stone.white,
+.miniStone.white {
+  border: 1px solid rgba(151, 136, 116, 0.22);
+
+  background:
+    radial-gradient(
+      circle at 32% 24%,
+      #ffffff 0%,
+      #f7f4ee 38%,
+      #ded8cd 78%,
+      #c7beb0 100%
+    );
+
+  box-shadow:
+    0 5px 8px rgba(67, 47, 28, 0.22),
+    inset 1px 1px 3px rgba(255, 255, 255, 0.84);
+}
+
+/* 最新一步棋外環仍然保留 */
+.stone.lastMove {
+  outline: 3px solid #2f80ed;
+  outline-offset: 3px;
+
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.94),
+    0 0 19px rgba(47, 128, 237, 0.9),
+    0 5px 8px rgba(67, 47, 28, 0.28);
+}
