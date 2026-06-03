@@ -7,133 +7,345 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <div class="page">
+  <div class="pageShell">
     <header class="header">
       <div>
-        <p class="tag">ONLINE GOMOKU</p>
+        <p class="eyebrow">ONLINE GOMOKU</p>
         <h1>多人連線五子棋</h1>
-        <p class="subtitle">即時配對、同步落子，挑戰你的五子棋實力。</p>
+        <p class="subtitle">即時配對、私人房號、同步落子與斷線續玩。</p>
       </div>
-      <div class="connection">
-        <span id="connectionDot" class="dot"></span>
-        <span id="connectionText">正在連線...</span>
+
+      <div class="headerStats">
+        <div class="onlinePill">
+          <span class="onlineIcon">👥</span>
+          <span id="onlineCountText">在線 0 人</span>
+        </div>
+
+        <div class="connectionPill">
+          <span id="connectionDot" class="connectionDot"></span>
+          <span id="connectionText">正在連線...</span>
+        </div>
       </div>
     </header>
 
-    <main class="layout">
-      <aside class="panel">
-        <div id="loginSection">
+    <main class="mainLayout">
+      <aside class="panel leftPanel">
+        <!-- =====================================
+             大廳
+        ====================================== -->
+        <section id="lobbySection">
+          <p class="sectionTag">LOBBY</p>
           <h2>加入對戰</h2>
+
           <label for="playerName">玩家名稱</label>
-          <input id="playerName" type="text" maxlength="20" placeholder="例如：癒合" />
-          <button id="joinButton" type="button">快速配對</button>
+          <input
+            id="playerName"
+            type="text"
+            maxlength="20"
+            placeholder="例如：癒合"
+            autocomplete="nickname"
+          />
 
-          <div class="lobbyDivider"><span>或使用私人房間</span></div>
-          <div class="privateRoomPanel">
-            <button id="createPrivateRoomButton" class="createPrivateRoomButton" type="button">建立私人房間</button>
-            <div class="privateJoinRow">
-              <input id="privateRoomCodeInput" type="text" inputmode="numeric" maxlength="4" placeholder="輸入 4 位數房號" autocomplete="off" />
-              <button id="joinPrivateRoomButton" class="joinPrivateRoomButton" type="button">加入</button>
-            </div>
-            <p id="privateRoomStatusText" class="privateRoomStatusText">建立房間後，將 4 位數房號分享給朋友。</p>
+          <button id="joinButton" type="button" class="primaryButton">
+            快速配對
+          </button>
+
+          <div class="divider"><span>或使用私人房間</span></div>
+
+          <button id="createPrivateRoomButton" type="button" class="secondaryButton">
+            建立私人房間
+          </button>
+
+          <div class="privateJoinRow">
+            <input
+              id="privateRoomCodeInput"
+              type="text"
+              inputmode="numeric"
+              maxlength="4"
+              placeholder="輸入 4 位數房號"
+              autocomplete="off"
+            />
+
+            <button id="joinPrivateRoomButton" type="button" class="compactButton">
+              加入
+            </button>
           </div>
 
-          <div id="privateRoomWaitingBox" class="privateRoomWaitingBox hidden">
-            <p class="privateRoomWaitingLabel">私人房間已建立</p>
-            <strong id="createdRoomCodeText" class="createdRoomCodeText">0000</strong>
-            <p class="privateRoomWaitingHint">請將房號分享給朋友，等待對方加入。</p>
-            <button id="cancelPrivateRoomButton" class="cancelPrivateRoomButton" type="button">取消等待</button>
-          </div>
-        </div>
+          <p class="smallHint">
+            建立房間後，把 4 位數房號分享給朋友即可加入。
+          </p>
 
-        <div id="gameInfo" class="hidden">
+          <div id="lobbyWaitingBox" class="waitingBox hidden">
+            <p id="lobbyWaitingTitle" class="waitingTitle">等待配對中</p>
+            <strong id="createdRoomCodeText" class="roomCode hidden">0000</strong>
+            <p id="lobbyWaitingHint" class="waitingHint">請稍候...</p>
+            <button id="cancelWaitingButton" type="button" class="ghostButton">
+              取消等待
+            </button>
+          </div>
+        </section>
+
+        <!-- =====================================
+             對局資訊
+        ====================================== -->
+        <section id="gameInfo" class="hidden">
+          <p class="sectionTag">GAME INFO</p>
           <h2>遊戲資訊</h2>
-          <div class="infoRow"><span>房間</span><strong id="roomId">尚未配對</strong></div>
-          <div class="infoRow"><span>我的棋子</span><strong id="myColor">尚未分配</strong></div>
-          <div class="infoRow"><span>目前狀態</span><strong id="statusText">等待中</strong></div>
+
+          <div class="infoRow">
+            <span>房間</span>
+            <strong id="roomId">尚未配對</strong>
+          </div>
+
+          <div class="infoRow">
+            <span>我的棋子</span>
+            <strong id="myColor">尚未分配</strong>
+          </div>
+
+          <div class="infoRow">
+            <span>目前狀態</span>
+            <strong id="statusText">等待中</strong>
+          </div>
+
+          <div class="infoRow">
+            <span>目前觀戰人數</span>
+            <strong id="gameSpectatorCount">0 人</strong>
+          </div>
 
           <div class="lastMoveSetting">
             <div>
-              <strong class="lastMoveSettingTitle">最後一步提示</strong>
-              <p class="lastMoveSettingHint">可隨時決定是否標示最新落子位置。</p>
+              <strong>最後一步提示</strong>
+              <p>可隨時決定是否顯示最新落子外環。</p>
             </div>
-            <button id="lastMoveToggleButton" class="lastMoveToggleButton active" type="button" aria-pressed="true">開啟</button>
+            <button
+              id="lastMoveToggleButton"
+              class="toggleButton active"
+              type="button"
+              aria-pressed="true"
+            >
+              開啟
+            </button>
           </div>
 
           <div class="players">
-            <div class="playerCard"><div class="miniStone black"></div><div><small>黑棋</small><p id="blackPlayer">等待玩家</p></div></div>
-            <div class="playerCard"><div class="miniStone white"></div><div><small>白棋</small><p id="whitePlayer">等待玩家</p></div></div>
+            <div class="playerCard">
+              <div class="miniStone black"></div>
+              <div>
+                <small>黑棋</small>
+                <p id="blackPlayer">等待玩家</p>
+              </div>
+            </div>
+
+            <div class="playerCard">
+              <div class="miniStone white"></div>
+              <div>
+                <small>白棋</small>
+                <p id="whitePlayer">等待玩家</p>
+              </div>
+            </div>
           </div>
 
           <div class="gameActions">
-            <button id="undoButton" class="undoButton" type="button" disabled>申請悔棋</button>
-            <p class="actionHint">僅能撤回自己剛剛落下的最後一顆棋子。</p>
+            <button id="undoButton" type="button" class="secondaryButton" disabled>
+              申請悔棋
+            </button>
+            <p class="smallHint">只能撤回自己剛剛落下的最後一步。</p>
           </div>
 
           <div id="undoRequestBox" class="undoRequestBox hidden">
-            <p id="undoRequestText">對手希望撤回最後一步。</p>
-            <div class="undoRequestActions">
-              <button id="acceptUndoButton" class="acceptUndoButton" type="button">同意</button>
-              <button id="rejectUndoButton" class="rejectUndoButton" type="button">拒絕</button>
+            <p id="undoRequestText">對手希望撤回最後一步，是否同意？</p>
+            <div class="twoButtonRow">
+              <button id="acceptUndoButton" type="button" class="acceptButton">同意</button>
+              <button id="rejectUndoButton" type="button" class="rejectButton">拒絕</button>
             </div>
           </div>
-        </div>
-      </aside>
-
-      <section class="boardPanel">
-        <div id="board" class="board"></div>
-      </section>
-
-      <aside class="sideColumn">
-        <section class="sideCard rankingCard">
-          <div class="sideCardHeader">
-            <div><p class="sideCardTag">RANKING</p><h2>積分排行榜</h2></div>
-            <button id="refreshRankingButton" class="iconButton" type="button" title="重新整理排行榜">↻</button>
-          </div>
-          <div id="rankingList" class="rankingList"><p class="emptyText">尚無排行榜資料</p></div>
-          <p class="rankingRule">勝利 +3 分｜平手 +1 分｜失敗 +0 分</p>
         </section>
 
-        <section id="roomChatCard" class="sideCard chatCard hidden">
-          <div class="sideCardHeader"><div><p class="sideCardTag">ROOM CHAT</p><h2>房間聊天室</h2></div></div>
-          <div id="chatMessages" class="chatMessages"><p class="emptyText">配對成功後即可聊天</p></div>
-          <form id="chatForm" class="chatForm">
-            <input id="chatInput" type="text" maxlength="120" placeholder="輸入訊息..." autocomplete="off" disabled />
-            <button id="sendChatButton" type="submit" disabled>傳送</button>
+        <!-- =====================================
+             觀戰資訊
+        ====================================== -->
+        <section id="spectatorInfo" class="hidden">
+          <p class="sectionTag">SPECTATOR MODE</p>
+          <h2>觀戰資訊</h2>
+
+          <div class="spectatorModeBadge">唯讀模式</div>
+
+          <div class="infoRow">
+            <span>房間</span>
+            <strong id="spectatorRoomId">尚未選擇</strong>
+          </div>
+
+          <div class="infoRow">
+            <span>對戰玩家</span>
+            <strong id="spectatorMatch">等待資料</strong>
+          </div>
+
+          <div class="infoRow">
+            <span>目前狀態</span>
+            <strong id="spectatorTurn">等待資料</strong>
+          </div>
+
+          <div class="infoRow">
+            <span>同時觀戰</span>
+            <strong id="spectatorCount">0 人</strong>
+          </div>
+
+          <div class="lastMoveSetting">
+            <div>
+              <strong>最後一步提示</strong>
+              <p>觀戰時也可切換最新落子外環。</p>
+            </div>
+            <button
+              id="spectatorLastMoveToggleButton"
+              class="toggleButton active"
+              type="button"
+              aria-pressed="true"
+            >
+              開啟
+            </button>
+          </div>
+
+          <button id="leaveSpectatingButton" type="button" class="ghostButton">
+            離開觀戰並返回大廳
+          </button>
+        </section>
+      </aside>
+
+      <!-- =====================================
+           棋盤
+      ====================================== -->
+      <section class="boardPanel">
+        <div class="boardHeader">
+          <div>
+            <p class="sectionTag">BOARD</p>
+            <h2>五子棋棋盤</h2>
+          </div>
+          <p id="boardHint">請先加入對戰</p>
+        </div>
+
+        <div class="boardScroller">
+          <div id="board" class="board" aria-label="十五乘十五五子棋棋盤"></div>
+        </div>
+      </section>
+
+      <!-- =====================================
+           右側：進行中對局、排行榜、公開聊天室、房間聊天室
+      ====================================== -->
+      <aside class="sideColumn">
+        <section class="panel sideCard liveRoomsCard">
+          <div class="cardHeader">
+            <div>
+              <p class="sectionTag">LIVE GAMES</p>
+              <h2>進行中對局</h2>
+            </div>
+            <button id="refreshLiveRoomsButton" type="button" class="iconButton" title="重新整理可觀戰房間">
+              ↻
+            </button>
+          </div>
+
+          <div id="liveRoomList" class="liveRoomList">
+            <p class="emptyText">目前沒有進行中的對局</p>
+          </div>
+
+          <p class="smallHint">只能觀看尚未結束的棋局；觀戰者無法落子、悔棋或使用房間聊天室。</p>
+        </section>
+
+        <section class="panel sideCard">
+          <div class="cardHeader">
+            <div>
+              <p class="sectionTag">RANKING</p>
+              <h2>積分排行榜</h2>
+            </div>
+            <button id="refreshRankingButton" type="button" class="iconButton" title="重新整理排行榜">
+              ↻
+            </button>
+          </div>
+
+          <div id="rankingList" class="rankingList">
+            <p class="emptyText">尚無排行榜資料</p>
+          </div>
+
+          <p class="smallHint">勝利 +3 分｜平手 +1 分｜失敗 +0 分</p>
+        </section>
+
+        <section class="panel sideCard publicChatCard">
+          <div class="cardHeader">
+            <div>
+              <p class="sectionTag">PUBLIC CHAT</p>
+              <h2>公開聊天室</h2>
+            </div>
+            <span class="publicBadge">所有人可見</span>
+          </div>
+
+          <div id="globalChatMessages" class="chatMessages">
+            <p class="emptyText">尚無公開訊息</p>
+          </div>
+
+          <form id="globalChatForm" class="chatForm">
+            <input
+              id="globalChatInput"
+              type="text"
+              maxlength="120"
+              placeholder="輸入公開訊息..."
+              autocomplete="off"
+            />
+            <button id="globalSendChatButton" type="submit" class="compactButton">傳送</button>
           </form>
+
+          <p class="smallHint">永久保存最近 10,000 則；網頁只載入最近 100 則。</p>
+        </section>
+
+        <section id="roomChatCard" class="panel sideCard hidden">
+          <div class="cardHeader">
+            <div>
+              <p class="sectionTag">ROOM CHAT</p>
+              <h2>房間聊天室</h2>
+            </div>
+            <span class="roomBadge">對局雙方</span>
+          </div>
+
+          <div id="chatMessages" class="chatMessages">
+            <p class="emptyText">配對成功後即可聊天</p>
+          </div>
+
+          <form id="chatForm" class="chatForm">
+            <input
+              id="chatInput"
+              type="text"
+              maxlength="120"
+              placeholder="輸入房間訊息..."
+              autocomplete="off"
+              disabled
+            />
+            <button id="sendChatButton" type="submit" class="compactButton" disabled>傳送</button>
+          </form>
+
+          <p class="smallHint">保留最近 50 則；Render 重啟後可隨未完成棋局恢復。</p>
         </section>
       </aside>
     </main>
-
-    <section class="sideCard chatCard globalChatCard publicChatSection">
-      <div class="sideCardHeader">
-        <div><p class="sideCardTag">PUBLIC CHAT</p><h2>公開聊天室</h2></div>
-        <span class="publicBadge">所有人可見</span>
-      </div>
-      <div id="globalChatMessages" class="chatMessages globalChatMessages"><p class="emptyText">尚無公開訊息</p></div>
-      <form id="globalChatForm" class="chatForm">
-        <input id="globalChatInput" type="text" maxlength="120" placeholder="輸入公開訊息..." autocomplete="off" />
-        <button id="globalSendChatButton" type="submit">傳送</button>
-      </form>
-      <p class="globalChatHint">公開聊天室中的內容，所有在線玩家都看得到。只載入最近 100 則訊息。</p>
-    </section>
   </div>
 
-  <div id="resultModal" class="modalOverlay hidden" role="dialog" aria-modal="true" aria-labelledby="resultTitle">
+  <!-- =====================================
+       勝負、離線與恢復失敗視窗
+  ====================================== -->
+  <div id="resultModal" class="modalOverlay hidden" role="dialog" aria-modal="true">
     <div id="resultModalCard" class="resultModalCard">
       <div id="resultIcon" class="resultIcon">🏆</div>
       <p id="resultBadge" class="resultBadge">GAME OVER</p>
-      <h2 id="resultTitle" class="resultTitle">恭喜獲勝！</h2>
+      <h2 id="resultTitle">恭喜獲勝！</h2>
       <p id="resultMessage" class="resultMessage">您成功完成五子連線。</p>
       <p id="rematchHint" class="modalHint">可以返回首頁，或邀請同一位玩家再來一局。</p>
+
       <div class="resultActions">
-        <button id="homeButton" class="homeButton" type="button">回首頁</button>
-        <button id="rematchButton" class="continueButton" type="button">與同對手繼續</button>
+        <button id="homeButton" type="button" class="homeButton">回首頁</button>
+        <button id="rematchButton" type="button" class="continueButton">與同對手繼續</button>
       </div>
     </div>
   </div>
 
   <div id="toast" class="toast hidden"></div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script src="/app.js"></script>
 </body>
