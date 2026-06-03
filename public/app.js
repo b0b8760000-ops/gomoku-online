@@ -455,7 +455,8 @@ function renderLiveRooms(rooms) {
     main.className = "liveRoomMain";
 
     const title = document.createElement("strong");
-    title.textContent = `${room.blackPlayer} vs ${room.whitePlayer}`;
+title.textContent =
+  `⚫ 黑棋：${room.blackPlayer}　vs　⚪ 白棋：${room.whitePlayer}`;
 
     const meta = document.createElement("p");
     meta.textContent = `第 ${room.round} 局｜${room.moveCount} 步｜${room.spectatorCount} 人觀戰`;
@@ -483,7 +484,8 @@ function updateSpectatorPanel(data) {
   const turnText = data.currentTurn === "black" ? "黑棋" : "白棋";
 
   spectatorRoomIdText.textContent = data.roomId;
-  spectatorMatchText.textContent = `${blackPlayer?.name || "黑棋玩家"} vs ${whitePlayer?.name || "白棋玩家"}`;
+spectatorMatchText.textContent =
+  `⚫ 黑棋：${blackPlayer?.name || "等待玩家"} ｜ ⚪ 白棋：${whitePlayer?.name || "等待玩家"}`;
   spectatorTurnText.textContent =
     data.status === "playing" ? `輪到${turnText}落子` : "對局已結束";
   spectatorCountText.textContent = `${data.spectatorCount || 0} 人`;

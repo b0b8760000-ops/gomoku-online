@@ -37,6 +37,20 @@ const DISCONNECT_GRACE_PERIOD_MS = 3 * 60 * 1000;
 
 // active_rooms 24 小時未更新後自動清除。
 const ACTIVE_ROOM_TTL_MS = 24 * 60 * 60 * 1000;
+// ==========================================
+// 觀戰清單只顯示最近仍有活動的房間
+//
+// active_rooms 仍保留 24 小時供原玩家恢復，
+// 但超過 6 分鐘沒有任何玩家心跳的房間，
+// 不再顯示於公開觀戰清單。
+// ==========================================
+const SPECTATABLE_ROOM_VISIBLE_MS =
+  6 * 60 * 1000;
+
+// 在線玩家最多每 2 分鐘更新一次 MongoDB 活動時間。
+// 不需要每 30 秒心跳都寫入資料庫。
+const ROOM_PRESENCE_PERSIST_MS =
+  2 * 60 * 1000;
 
 // 聊天限制。
 const ROOM_CHAT_LIMIT = 50;
@@ -659,6 +673,50 @@ async function persistActiveRoom(room) {
     { upsert: true }
   );
 }
+// ==========================================
+// 在線玩家心跳：低頻率更新房間活動時間
+//
+// 心跳仍然每 30 秒傳一次，
+// 但 MongoDB 最多每 2 分鐘才更新一次。
+// ==========================================
+async function touchActiveRoomPresence(
+  roomId
+) {
+  if (!roomId) {
+    return;
+  }
+
+  const now =
+    new Date();
+
+  const updateThreshold =
+    new Date(
+      Date.now() -
+        ROOM_PRESENCE_PERSIST_MS
+    );
+
+  await ActiveRoom.updateOne(
+    {
+      roomId,
+      status:
+        "playing",
+
+      lastActivityAt: {
+        $lt:
+          updateThreshold
+      }
+    },
+    {
+      $set: {
+        lastActivityAt:
+          now,
+
+        expiresAt:
+          createExpiryDate()
+      }
+    }
+  );
+}
 
 function restoreRoomFromActiveDocument(document) {
   return {
@@ -725,10 +783,29 @@ async function getOrRestoreRoom(roomId) {
 }
 
 async function getSpectatableRooms() {
-  const activeRooms = await ActiveRoom.find({
-    status: "playing",
-    expiresAt: { $gt: new Date() }
-  })
+  const visibleAfter =
+    new Date(
+      Date.now() -
+        SPECTATABLE_ROOM_VISIBLE_MS
+    );
+
+  const activeRooms =
+    await ActiveRoom.find({
+      status:
+        "playing",
+
+      expiresAt: {
+        $gt:
+          new Date()
+      },
+
+      // 超過 6 分鐘沒有任何活動時，
+      // 不再顯示於觀戰清單。
+      lastActivityAt: {
+        $gt:
+          visibleAfter
+      }
+    })
     .sort({ updatedAt: -1 })
     .limit(50)
     .lean();
@@ -1128,6 +1205,22 @@ io.on("connection", (socket) => {
   socket.on("clientHeartbeat", (_data, callback) => {
     const now = Date.now();
     socket.data.lastHeartbeatAt = now;
+        // 若玩家正在對局中，
+    // 低頻率更新 MongoDB 房間活動時間。
+    //
+    // 不要 await，避免心跳回覆被 MongoDB 延遲。
+    if (
+      socket.data.roomId
+    ) {
+      touchActiveRoomPresence(
+        socket.data.roomId
+      ).catch((error) => {
+        console.error(
+          "❌ 更新房間在線狀態失敗：",
+          error.message
+        );
+      });
+    }
 
     // 每 5 分鐘印一次即可，避免 Logs 太多。
     if (!socket.data.lastHeartbeatLogAt || now - socket.data.lastHeartbeatLogAt > 5 * 60 * 1000) {
@@ -1885,6 +1978,25 @@ app.get("/api/spectatable-rooms", async (_req, res) => {
 // ==========================================
 // 啟動 Server
 // ==========================================
+// ==========================================
+// 每分鐘重新廣播可觀戰清單
+//
+// 即使沒有玩家手動按重新整理，
+// 已失效的房間也會自動從畫面移除。
+// ==========================================
+setInterval(() => {
+  if (!isMongoConnected()) {
+    return;
+  }
+
+  broadcastSpectatableRooms()
+    .catch((error) => {
+      console.error(
+        "❌ 自動更新觀戰清單失敗：",
+        error.message
+      );
+    });
+}, 60 * 1000);
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log("🚀 Server 已啟動");
   console.log(`🌐 本機網址：http://localhost:${PORT}`);
