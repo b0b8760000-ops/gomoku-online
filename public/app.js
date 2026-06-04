@@ -10,9 +10,14 @@ const BOARD_SIZE = 15;
 const BOARD_CELL_COUNT = BOARD_SIZE * BOARD_SIZE;
 const GAME_MODE_STANDARD = "standard";
 const GAME_MODE_BATTLE_ROYALE = "battle-royale";
+const GAME_MODE_ROTATING_BOARD = "rotating-board";
+const SUPPORTED_GAME_MODES = [
+  GAME_MODE_STANDARD,
+  GAME_MODE_BATTLE_ROYALE,
+  GAME_MODE_ROTATING_BOARD
+];
 const BATTLE_ROYALE_ANIMATION_MS = 950;
-// 每一格棋盤的尺寸。
-// 必須與 style.css 中 .cell 的 width、height 保持一致。
+const ROTATING_BOARD_ANIMATION_MS = 900;
 const BOARD_CELL_PIXEL = 42;
 const $ = (id) => document.getElementById(id);
 
@@ -59,6 +64,10 @@ let movesUntilShrink = 10;
 let shrinkingCells = new Set();
 let shrinkAnimationTimer = null;
 let battleRoyaleClockTimer = null;
+let rotationCount = 0;
+let movesUntilRotation = 10;
+let rotatingBoard = false;
+let rotationAnimationTimer = null;
 let heartbeatTimer = null;
 let toastTimer = null;
 
@@ -94,11 +103,15 @@ const battleRoyaleInfo = $("battleRoyaleInfo");
 const battleRoyaleBoardSize = $("battleRoyaleBoardSize");
 const battleRoyaleCountdown = $("battleRoyaleCountdown");
 const battleRoyaleMoves = $("battleRoyaleMoves");
+const rotatingBoardInfo = $("rotatingBoardInfo");
+const rotatingBoardMoves = $("rotatingBoardMoves");
+const rotatingBoardCount = $("rotatingBoardCount");
 const blackPlayerText = $("blackPlayer");
 const whitePlayerText = $("whitePlayer");
 const lastMoveToggleButton = $("lastMoveToggleButton");
 
 const undoButton = $("undoButton");
+const undoHint = $("undoHint");
 const undoRequestBox = $("undoRequestBox");
 const undoRequestText = $("undoRequestText");
 const acceptUndoButton = $("acceptUndoButton");
@@ -134,6 +147,9 @@ const spectatorBattleRoyaleInfo = $("spectatorBattleRoyaleInfo");
 const spectatorBattleRoyaleBoardSize = $("spectatorBattleRoyaleBoardSize");
 const spectatorBattleRoyaleCountdown = $("spectatorBattleRoyaleCountdown");
 const spectatorBattleRoyaleMoves = $("spectatorBattleRoyaleMoves");
+const spectatorRotatingBoardInfo = $("spectatorRotatingBoardInfo");
+const spectatorRotatingBoardMoves = $("spectatorRotatingBoardMoves");
+const spectatorRotatingBoardCount = $("spectatorRotatingBoardCount");
 const spectatorCountText = $("spectatorCount");
 const gameSpectatorCountText = $("gameSpectatorCount");
 const leaveSpectatingButton = $("leaveSpectatingButton");
@@ -240,20 +256,43 @@ function showLobbyWaiting({ title, hint, roomCode = null }) {
 }
 
 function getSelectedGameMode() {
-  return gameModeSelect.value === GAME_MODE_BATTLE_ROYALE
-    ? GAME_MODE_BATTLE_ROYALE
+  return SUPPORTED_GAME_MODES.includes(gameModeSelect.value)
+    ? gameModeSelect.value
+    : GAME_MODE_STANDARD;
+}
+
+function normalizeGameMode(mode) {
+  return SUPPORTED_GAME_MODES.includes(mode)
+    ? mode
     : GAME_MODE_STANDARD;
 }
 
 function getGameModeName(mode = currentGameMode) {
-  return mode === GAME_MODE_BATTLE_ROYALE ? "⚔️ 大逃殺模式" : "經典模式";
+  if (mode === GAME_MODE_BATTLE_ROYALE) {
+    return "⚔️ 大逃殺模式";
+  }
+
+  if (mode === GAME_MODE_ROTATING_BOARD) {
+    return "🔄 輪盤五子棋";
+  }
+
+  return "經典模式";
 }
 
 function updateModeDescription() {
-  modeDescription.textContent =
-    getSelectedGameMode() === GAME_MODE_BATTLE_ROYALE
-      ? "此選擇會同時套用於快速配對與建立私人房間。每 60 秒或累積 10 手，最外圈會崩塌並移除該圈棋子。棋盤最低縮至 7 × 7。"
-      : "此選擇會同時套用於快速配對與建立私人房間。使用標準 15 × 15 棋盤，先完成五子連線即可獲勝。";
+  const mode = getSelectedGameMode();
+
+  if (mode === GAME_MODE_BATTLE_ROYALE) {
+    modeDescription.textContent = "此選擇會同時套用於快速配對與建立私人房間。每 60 秒或累積 10 手，最外圈木質棋盤會崩塌並移除該圈棋子。棋盤最低縮至 7 × 7。特殊模式暫不支援悔棋。";
+    return;
+  }
+
+  if (mode === GAME_MODE_ROTATING_BOARD) {
+    modeDescription.textContent = "此選擇會同時套用於快速配對與建立私人房間。雙方每累積 10 手，整個棋盤與棋子會順時針旋轉 90 度。特殊模式暫不支援悔棋。";
+    return;
+  }
+
+  modeDescription.textContent = "此選擇會同時套用於快速配對與建立私人房間。標準 15 × 15 棋盤，先完成五子連線即可獲勝；經典模式保留悔棋功能。";
 }
 
 function isCellActive(x, y) {
@@ -263,28 +302,15 @@ function isCellActive(x, y) {
 function getCellKey(x, y) {
   return `${x},${y}`;
 }
-/**
- * 控制木質棋盤表面的縮小程度。
- *
- * level = 0：15 × 15
- * level = 1：13 × 13
- * level = 2：11 × 11
- * level = 3： 9 × 9
- * level = 4： 7 × 7
- *
- * animate = true 時，木板會播放向中央縮小的動畫。
- */
+
 function setBoardSurfaceShrinkLevel(level = 0, animate = false) {
-  const normalizedLevel =
-    currentGameMode === GAME_MODE_BATTLE_ROYALE
-      ? Math.max(0, Math.min(4, Number(level) || 0))
-      : 0;
+  const normalizedLevel = currentGameMode === GAME_MODE_BATTLE_ROYALE
+    ? Math.max(0, Math.min(4, Number(level) || 0))
+    : 0;
 
   board.classList.remove("boardSurfaceShrinking");
 
   if (animate) {
-    // 強制瀏覽器重新計算一次樣式，
-    // 確保每次縮圈都會重新播放 transition。
     void board.offsetWidth;
     board.classList.add("boardSurfaceShrinking");
   }
@@ -309,39 +335,51 @@ function formatShrinkCountdown() {
 }
 
 function updateBattleRoyalePanel() {
-  const enabled = currentGameMode === GAME_MODE_BATTLE_ROYALE;
+  const battleRoyaleEnabled = currentGameMode === GAME_MODE_BATTLE_ROYALE;
+  const rotatingEnabled = currentGameMode === GAME_MODE_ROTATING_BOARD;
   const modeName = getGameModeName();
 
   gameModeText.textContent = modeName;
   spectatorGameModeText.textContent = modeName;
-  battleRoyaleInfo.classList.toggle("hidden", !enabled);
-  spectatorBattleRoyaleInfo.classList.toggle("hidden", !enabled);
-  board.classList.toggle("battleRoyaleBoard", enabled);
 
-  if (!enabled) {
-    return;
+  battleRoyaleInfo.classList.toggle("hidden", !battleRoyaleEnabled);
+  spectatorBattleRoyaleInfo.classList.toggle("hidden", !battleRoyaleEnabled);
+  rotatingBoardInfo.classList.toggle("hidden", !rotatingEnabled);
+  spectatorRotatingBoardInfo.classList.toggle("hidden", !rotatingEnabled);
+
+  board.classList.toggle("battleRoyaleBoard", battleRoyaleEnabled);
+  board.classList.toggle("rotatingModeBoard", rotatingEnabled);
+
+  if (battleRoyaleEnabled) {
+    const boardSizeText = `有效棋盤：${activeBoardSize} × ${activeBoardSize}`;
+    const countdownText = nextShrinkAt
+      ? `下一次縮圈：${formatShrinkCountdown()}`
+      : "下一次縮圈：已縮至最小棋盤";
+    const movesText = nextShrinkAt
+      ? `回合觸發：再 ${movesUntilShrink} 手縮圈`
+      : "回合觸發：已停止縮圈";
+
+    battleRoyaleBoardSize.textContent = boardSizeText;
+    spectatorBattleRoyaleBoardSize.textContent = boardSizeText;
+    battleRoyaleCountdown.textContent = countdownText;
+    spectatorBattleRoyaleCountdown.textContent = countdownText;
+    battleRoyaleMoves.textContent = movesText;
+    spectatorBattleRoyaleMoves.textContent = movesText;
   }
 
-  const boardSizeText = `有效棋盤：${activeBoardSize} × ${activeBoardSize}`;
-  const countdownText = nextShrinkAt
-    ? `下一次縮圈：${formatShrinkCountdown()}`
-    : "下一次縮圈：已縮至最小棋盤";
-  const movesText = nextShrinkAt
-    ? `回合觸發：再 ${movesUntilShrink} 手縮圈`
-    : "回合觸發：已停止縮圈";
+  if (rotatingEnabled) {
+    const movesText = `距離下一次旋轉：再 ${movesUntilRotation} 手`;
+    const countText = `目前已旋轉：${rotationCount} 次`;
 
-  battleRoyaleBoardSize.textContent = boardSizeText;
-  spectatorBattleRoyaleBoardSize.textContent = boardSizeText;
-  battleRoyaleCountdown.textContent = countdownText;
-  spectatorBattleRoyaleCountdown.textContent = countdownText;
-  battleRoyaleMoves.textContent = movesText;
-  spectatorBattleRoyaleMoves.textContent = movesText;
+    rotatingBoardMoves.textContent = movesText;
+    spectatorRotatingBoardMoves.textContent = movesText;
+    rotatingBoardCount.textContent = countText;
+    spectatorRotatingBoardCount.textContent = countText;
+  }
 }
 
 function applyRoomModeState(data = {}) {
-  currentGameMode = data.mode === GAME_MODE_BATTLE_ROYALE
-    ? GAME_MODE_BATTLE_ROYALE
-    : GAME_MODE_STANDARD;
+  currentGameMode = normalizeGameMode(data.mode);
   activeMin = Number.isInteger(data.activeMin) ? data.activeMin : 0;
   activeMax = Number.isInteger(data.activeMax) ? data.activeMax : BOARD_SIZE - 1;
   activeBoardSize = Number.isInteger(data.activeBoardSize)
@@ -349,8 +387,13 @@ function applyRoomModeState(data = {}) {
     : activeMax - activeMin + 1;
   nextShrinkAt = data.nextShrinkAt || null;
   movesUntilShrink = Number.isInteger(data.movesUntilShrink) ? data.movesUntilShrink : 10;
-    // Render 重啟、重新整理網頁或重新觀戰時，
-  // 讓木質棋盤直接恢復到正確大小。
+  rotationCount = Number.isInteger(data.rotationCount) ? data.rotationCount : 0;
+  movesUntilRotation = Number.isInteger(data.movesUntilRotation) ? data.movesUntilRotation : 10;
+
+  if (!rotationAnimationTimer) {
+    rotatingBoard = Boolean(data.rotating);
+  }
+
   setBoardSurfaceShrinkLevel(
     currentGameMode === GAME_MODE_BATTLE_ROYALE
       ? Number.isInteger(data.shrinkLevel)
@@ -359,6 +402,7 @@ function applyRoomModeState(data = {}) {
       : 0,
     false
   );
+
   updateBattleRoyalePanel();
 }
 
@@ -375,19 +419,37 @@ function updateLastMoveToggleButton() {
 }
 
 function updateUndoButton() {
+  const isClassicMode = currentGameMode === GAME_MODE_STANDARD;
   const canRequestUndo =
+    isClassicMode &&
     gameStatus === "playing" &&
     myColor &&
     lastMoveColor === myColor &&
     !undoPending &&
-    shrinkingCells.size === 0;
+    shrinkingCells.size === 0 &&
+    !rotatingBoard;
 
   undoButton.disabled = !canRequestUndo;
+
+  if (!isClassicMode) {
+    undoButton.textContent = "特殊模式暫不支援悔棋";
+    undoHint.textContent = "經典模式保留悔棋；大逃殺與輪盤等特殊模式暫時關閉悔棋。";
+    return;
+  }
+
   undoButton.textContent = undoPending ? "等待悔棋處理..." : "申請悔棋";
+  undoHint.textContent = "只能撤回自己剛剛落下的最後一步。";
 }
 
 function updateTurnText() {
   if (gameStatus !== "playing") {
+    return;
+  }
+
+  if (rotatingBoard) {
+    statusText.textContent = "棋盤旋轉中";
+    spectatorTurnText.textContent = "棋盤旋轉中";
+    boardHint.textContent = "🔄 棋盤正在順時針旋轉 90 度";
     return;
   }
 
@@ -503,6 +565,11 @@ function handleCellClick(x, y) {
 
   if (shrinkingCells.size > 0) {
     showToast("棋盤正在崩塌，請稍候再落子");
+    return;
+  }
+
+  if (rotatingBoard) {
+    showToast("棋盤正在旋轉，請稍候再落子");
     return;
   }
 
@@ -627,9 +694,15 @@ title.textContent =
   `⚫ 黑棋：${room.blackPlayer}　vs　⚪ 白棋：${room.whitePlayer}`;
 
     const meta = document.createElement("p");
-    const modeText = room.mode === GAME_MODE_BATTLE_ROYALE
-      ? `⚔️ 大逃殺 ${room.activeBoardSize || BOARD_SIZE} × ${room.activeBoardSize || BOARD_SIZE}`
-      : "經典模式";
+    let modeText = "經典模式";
+
+    if (room.mode === GAME_MODE_BATTLE_ROYALE) {
+      modeText = `⚔️ 大逃殺 ${room.activeBoardSize || BOARD_SIZE} × ${room.activeBoardSize || BOARD_SIZE}`;
+    }
+
+    if (room.mode === GAME_MODE_ROTATING_BOARD) {
+      modeText = `🔄 輪盤五子棋｜已旋轉 ${room.rotationCount || 0} 次`;
+    }
     meta.textContent = `第 ${room.round} 局｜${modeText}｜${room.moveCount} 步｜${room.spectatorCount} 人觀戰`;
 
     const button = document.createElement("button");
@@ -768,10 +841,14 @@ function resetToHome() {
   movesUntilShrink = 10;
   shrinkingCells.clear();
   clearTimeout(shrinkAnimationTimer);
-
-  // 返回首頁後恢復成完整的 15 × 15 木質棋盤。
+  shrinkAnimationTimer = null;
+  rotationCount = 0;
+  movesUntilRotation = 10;
+  rotatingBoard = false;
+  clearTimeout(rotationAnimationTimer);
+  rotationAnimationTimer = null;
+  board.classList.remove("boardRotating", "boardSurfaceShrinking");
   setBoardSurfaceShrinkLevel(0, false);
-
   updateBattleRoyalePanel();
 
   lobbySection.classList.remove("hidden");
@@ -1037,8 +1114,7 @@ socket.on("privateRoomCreated", (data) => {
     roomCode: data.roomCode
   });
 
-  const modeText = data.mode === GAME_MODE_BATTLE_ROYALE ? "大逃殺模式" : "經典模式";
-  showToast(`私人房間 ${data.roomCode} 已建立｜${modeText}`);
+  showToast(`私人房間 ${data.roomCode} 已建立｜${getGameModeName(normalizeGameMode(data.mode))}`);
 });
 
 socket.on("waitingCancelled", () => {
@@ -1072,15 +1148,6 @@ socket.on("resumeGameFailed", (message) => {
   clearCurrentRoomId();
   resetToHome();
   showResultModal("unavailable", message);
-});
-socket.on("roomExpired", (data) => {
-  clearCurrentRoomId();
-  resetToHome();
-
-  showResultModal(
-    "unavailable",
-    data?.message || "雙方離線過久，本局已自動結束。"
-  );
 });
 
 socket.on("gameState", (data) => {
@@ -1122,11 +1189,8 @@ socket.on("boardShrink", (data) => {
   shrinkingCells = new Set(
     (data.collapsedPositions || []).map((position) => getCellKey(position.x, position.y))
   );
-    // 外圈格子掉落的同時，木質棋盤外框也向中央縮小。
   setBoardSurfaceShrinkLevel(
-    Number.isInteger(data.shrinkLevel)
-      ? data.shrinkLevel
-      : activeMin + 1,
+    Number.isInteger(data.shrinkLevel) ? data.shrinkLevel : activeMin + 1,
     true
   );
   nextShrinkAt = data.nextShrinkAt || null;
@@ -1146,10 +1210,54 @@ socket.on("boardShrink", (data) => {
       ? data.activeBoardSize
       : activeMax - activeMin + 1;
     shrinkingCells.clear();
+    board.classList.remove("boardSurfaceShrinking");
     updateBattleRoyalePanel();
     renderBoard();
     updateUndoButton();
   }, BATTLE_ROYALE_ANIMATION_MS);
+});
+
+socket.on("boardRotate", (data) => {
+  if (data.roomId !== currentRoomId && data.roomId !== spectatingRoomId) {
+    return;
+  }
+
+  clearTimeout(rotationAnimationTimer);
+  currentGameMode = GAME_MODE_ROTATING_BOARD;
+  currentBoard = Array.isArray(data.boardBefore) ? data.boardBefore : currentBoard;
+  rotationCount = Number.isInteger(data.rotationCount) ? data.rotationCount : rotationCount + 1;
+  movesUntilRotation = Number.isInteger(data.movesUntilRotation) ? data.movesUntilRotation : 10;
+  rotatingBoard = true;
+
+  board.classList.remove("boardRotating");
+  void board.offsetWidth;
+  board.classList.add("boardRotating");
+
+  updateBattleRoyalePanel();
+  updateTurnText();
+  updateUndoButton();
+  renderBoard();
+  showToast("🔄 輪盤啟動！棋盤順時針旋轉 90 度");
+
+  rotationAnimationTimer = setTimeout(() => {
+    currentBoard = Array.isArray(data.boardAfter) ? data.boardAfter : currentBoard;
+    rotatingBoard = false;
+    rotationAnimationTimer = null;
+    board.classList.remove("boardRotating");
+    updateBattleRoyalePanel();
+    renderBoard();
+    updateTurnText();
+    updateUndoButton();
+  }, Number(data.animationMs) || ROTATING_BOARD_ANIMATION_MS);
+});
+
+socket.on("roomExpired", (data) => {
+  clearCurrentRoomId();
+  resetToHome();
+  showResultModal(
+    "unavailable",
+    data?.message || "雙方離線過久，本局已自動結束。"
+  );
 });
 
 socket.on("opponentConnectionStatus", (data) => {
@@ -1317,9 +1425,9 @@ socket.on("errorMessage", (message) => showToast(message));
 // 初始化
 // ==========================================
 playerNameInput.value = localStorage.getItem("gomokuDisplayName") || "";
-gameModeSelect.value = localStorage.getItem("gomokuSelectedGameMode") === GAME_MODE_BATTLE_ROYALE
-  ? GAME_MODE_BATTLE_ROYALE
-  : GAME_MODE_STANDARD;
+gameModeSelect.value = normalizeGameMode(
+  localStorage.getItem("gomokuSelectedGameMode")
+);
 gameModeSelect.addEventListener("change", () => {
   localStorage.setItem("gomokuSelectedGameMode", getSelectedGameMode());
   updateModeDescription();

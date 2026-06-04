@@ -36,6 +36,13 @@ const BOARD_CELL_COUNT = BOARD_SIZE * BOARD_SIZE;
 // ==========================================
 const GAME_MODE_STANDARD = "standard";
 const GAME_MODE_BATTLE_ROYALE = "battle-royale";
+const GAME_MODE_ROTATING_BOARD = "rotating-board";
+
+const VALID_GAME_MODES = [
+  GAME_MODE_STANDARD,
+  GAME_MODE_BATTLE_ROYALE,
+  GAME_MODE_ROTATING_BOARD
+];
 
 // 大逃殺模式：每 60 秒或每累積 10 手，任一條件先到就縮一圈。
 // 15x15 -> 13x13 -> 11x11 -> 9x9 -> 7x7。
@@ -44,23 +51,21 @@ const BATTLE_ROYALE_MOVES_PER_SHRINK = 10;
 const BATTLE_ROYALE_MIN_BOARD_SIZE = 7;
 const BATTLE_ROYALE_ANIMATION_MS = 950;
 
+// 輪盤五子棋：雙方合計每 10 手，整個棋盤順時針旋轉 90 度。
+const ROTATING_BOARD_MOVES_PER_ROTATION = 10;
+const ROTATING_BOARD_ANIMATION_MS = 900;
+
 // 玩家一般短暫斷線時，保留房間 3 分鐘。
 // Render 完整重啟時，則改由 MongoDB active_rooms 恢復。
 const DISCONNECT_GRACE_PERIOD_MS = 3 * 60 * 1000;
-// ==========================================
-// 雙方同時離線處理
-// ==========================================
 
-// 雙方都離線超過 3 分鐘後，直接刪除未完成棋局。
-// 這種情況不計算勝負，也不更新排行榜。
+// 雙方都離線超過 3 分鐘：視為放棄，不計分，直接清除 active_rooms。
+// 另外每分鐘掃描一次 MongoDB，避免 Render 重啟造成記憶體計時器消失。
 const BOTH_OFFLINE_TIMEOUT_MS = 3 * 60 * 1000;
-
-// 每 60 秒檢查一次 MongoDB 是否存在應該清除的舊房間。
 const ABANDONED_ROOM_CHECK_INTERVAL_MS = 60 * 1000;
 
-// 相容舊版房間資料：
-// 舊資料沒有 bothOfflineSince 欄位。
-// 如果超過 15 分鐘沒有任何心跳或活動，也自動清除。
+// 相容修改前留下的 active_rooms：舊資料沒有 bothOfflineSince。
+// 若長時間沒有任何活動，視為殘留房間並清除。
 const LEGACY_STALE_ROOM_TIMEOUT_MS = 15 * 60 * 1000;
 
 // active_rooms 24 小時未更新後自動清除。
@@ -106,6 +111,10 @@ mongoose
     await trimOldGlobalMessages().catch((error) => {
       console.error("⚠️ 啟動時清理公開聊天室失敗：", error.message);
     });
+
+    await cleanupAbandonedRooms().catch((error) => {
+      console.error("⚠️ 啟動時清理離線房間失敗：", error.message);
+    });
   })
   .catch((error) => {
     console.error("❌ MongoDB Atlas 連線失敗：", error.message);
@@ -141,10 +150,11 @@ const gameSchema = new mongoose.Schema(
     round: { type: Number, default: 1 },
     mode: {
       type: String,
-      enum: [GAME_MODE_STANDARD, GAME_MODE_BATTLE_ROYALE],
+      enum: VALID_GAME_MODES,
       default: GAME_MODE_STANDARD
     },
     shrinkLevel: { type: Number, default: 0 },
+    rotationCount: { type: Number, default: 0 },
     activeMin: { type: Number, default: 0 },
     activeMax: { type: Number, default: BOARD_SIZE - 1 },
     players: { type: [historyPlayerSchema], default: [] },
@@ -242,7 +252,7 @@ const activeRoomSchema = new mongoose.Schema(
     round: { type: Number, default: 1 },
     mode: {
       type: String,
-      enum: [GAME_MODE_STANDARD, GAME_MODE_BATTLE_ROYALE],
+      enum: VALID_GAME_MODES,
       default: GAME_MODE_STANDARD
     },
     shrinkLevel: { type: Number, default: 0 },
@@ -250,23 +260,22 @@ const activeRoomSchema = new mongoose.Schema(
     activeMax: { type: Number, default: BOARD_SIZE - 1 },
     movesSinceLastShrink: { type: Number, default: 0 },
     nextShrinkAt: { type: Date, default: null },
+    rotationCount: { type: Number, default: 0 },
+    movesSinceLastRotation: { type: Number, default: 0 },
     players: { type: [activePlayerSchema], default: [] },
     board: { type: [Number], default: () => Array(BOARD_CELL_COUNT).fill(0) },
     currentTurn: { type: String, enum: ["black", "white"], default: "black" },
     status: { type: String, enum: ["playing"], default: "playing" },
     moves: { type: [moveSchema], default: [] },
     roomChatMessages: { type: [roomMessageSchema], default: [] },
-lastActivityAt: { type: Date, default: Date.now },
+    lastActivityAt: { type: Date, default: Date.now },
 
-// 當兩位玩家都離線時，記錄開始時間。
-// 若其中一人重新連線，會重新設為 null。
-bothOfflineSince: {
-  type: Date,
-  default: null
-},
+    // 當兩位玩家都離線時，將開始時間寫入 MongoDB。
+    // Render 重啟後仍可正確清除過期房間。
+    bothOfflineSince: { type: Date, default: null },
 
-// expires: 0 代表以此欄位記錄的時間點為到期時間。
-expiresAt: { type: Date, required: true, index: { expires: 0 } }
+    // expires: 0 代表以此欄位記錄的時間點為到期時間。
+    expiresAt: { type: Date, required: true, index: { expires: 0 } }
   },
   {
     timestamps: true,
@@ -337,8 +346,8 @@ function cleanChatMessage(value, maxLength = 120) {
 }
 
 function cleanGameMode(value) {
-  return value === GAME_MODE_BATTLE_ROYALE
-    ? GAME_MODE_BATTLE_ROYALE
+  return VALID_GAME_MODES.includes(value)
+    ? value
     : GAME_MODE_STANDARD;
 }
 
@@ -363,6 +372,14 @@ function getOppositeColor(color) {
 
 function isBattleRoyaleRoom(room) {
   return room?.mode === GAME_MODE_BATTLE_ROYALE;
+}
+
+function isRotatingBoardRoom(room) {
+  return room?.mode === GAME_MODE_ROTATING_BOARD;
+}
+
+function isSpecialModeRoom(room) {
+  return room?.mode !== GAME_MODE_STANDARD;
 }
 
 function getActiveBoardSize(room) {
@@ -407,6 +424,13 @@ function clearBattleRoyaleTimer(room) {
   if (room?.shrinkTimer) {
     clearTimeout(room.shrinkTimer);
     room.shrinkTimer = null;
+  }
+}
+
+function clearRotationAnimationTimer(room) {
+  if (room?.rotationAnimationTimer) {
+    clearTimeout(room.rotationAnimationTimer);
+    room.rotationAnimationTimer = null;
   }
 }
 
@@ -655,6 +679,124 @@ function checkWin(board, x, y, stoneValue) {
 }
 
 // ==========================================
+// 輪盤五子棋：順時針旋轉棋盤
+// ==========================================
+function rotatePositionClockwise(x, y) {
+  return {
+    x: BOARD_SIZE - 1 - y,
+    y: x
+  };
+}
+
+function rotateBoardClockwise(board) {
+  const rotatedBoard = Array(BOARD_CELL_COUNT).fill(0);
+
+  for (let y = 0; y < BOARD_SIZE; y += 1) {
+    for (let x = 0; x < BOARD_SIZE; x += 1) {
+      const target = rotatePositionClockwise(x, y);
+      rotatedBoard[getBoardIndex(target.x, target.y)] = board[getBoardIndex(x, y)];
+    }
+  }
+
+  return rotatedBoard;
+}
+
+function rotateMoveCoordinatesClockwise(moves) {
+  moves.forEach((move) => {
+    const target = rotatePositionClockwise(move.x, move.y);
+    move.x = target.x;
+    move.y = target.y;
+  });
+}
+
+function hasWinningLineForColor(board, color) {
+  const stoneValue = color === "black" ? 1 : 2;
+
+  for (let y = 0; y < BOARD_SIZE; y += 1) {
+    for (let x = 0; x < BOARD_SIZE; x += 1) {
+      if (
+        board[getBoardIndex(x, y)] === stoneValue &&
+        checkWin(board, x, y, stoneValue)
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+async function rotateRotatingBoardRoom(room, triggeringColor) {
+  if (
+    !room ||
+    !rooms.has(room.roomId) ||
+    room.status !== "playing" ||
+    !isRotatingBoardRoom(room) ||
+    room.rotating
+  ) {
+    return;
+  }
+
+  room.rotating = true;
+  clearRotationAnimationTimer(room);
+
+  const boardBefore = [...room.board];
+  room.board = rotateBoardClockwise(room.board);
+  rotateMoveCoordinatesClockwise(room.moves);
+  room.rotationCount += 1;
+  room.movesSinceLastRotation = 0;
+
+  await persistActiveRoom(room);
+
+  const payload = {
+    roomId: room.roomId,
+    boardBefore,
+    boardAfter: [...room.board],
+    rotationCount: room.rotationCount,
+    movesUntilRotation: ROTATING_BOARD_MOVES_PER_ROTATION,
+    animationMs: ROTATING_BOARD_ANIMATION_MS
+  };
+
+  io.to(room.roomId).emit("boardRotate", payload);
+  io.to(getSpectatorChannel(room.roomId)).emit("boardRotate", payload);
+
+  await emitSystemRoomMessage(
+    room,
+    `🔄 輪盤啟動！棋盤已順時針旋轉 90 度，目前共旋轉 ${room.rotationCount} 次。`
+  );
+
+  room.rotationAnimationTimer = setTimeout(async () => {
+    if (!rooms.has(room.roomId) || room.status !== "playing") {
+      return;
+    }
+
+    room.rotating = false;
+    room.rotationAnimationTimer = null;
+
+    // 按照已確認規則：旋轉後若雙方同時形成五子，剛剛落子的玩家優先獲勝。
+    if (hasWinningLineForColor(room.board, triggeringColor)) {
+      await finalizeRoom(room, triggeringColor, "five-in-row");
+      return;
+    }
+
+    const opponentColor = getOppositeColor(triggeringColor);
+
+    if (hasWinningLineForColor(room.board, opponentColor)) {
+      await finalizeRoom(room, opponentColor, "five-in-row");
+      return;
+    }
+
+    if (!hasAvailableCell(room)) {
+      await finalizeRoom(room, "draw", "draw");
+      return;
+    }
+
+    emitRoomState(room);
+    await broadcastSpectatableRooms();
+  }, ROTATING_BOARD_ANIMATION_MS);
+}
+
+// ==========================================
 // MongoDB：公開聊天室
 // ==========================================
 async function getRecentGlobalMessages() {
@@ -775,6 +917,8 @@ function toActiveRoomDocument(room) {
     activeMax: room.activeMax,
     movesSinceLastShrink: room.movesSinceLastShrink,
     nextShrinkAt: room.nextShrinkAt,
+    rotationCount: room.rotationCount,
+    movesSinceLastRotation: room.movesSinceLastRotation,
     players: room.players.map((player) => ({
       playerToken: player.playerToken,
       name: player.name,
@@ -995,6 +1139,10 @@ function restoreRoomFromActiveDocument(document) {
     nextShrinkAt: document.nextShrinkAt || null,
     shrinkTimer: null,
     shrinking: false,
+    rotationCount: Number(document.rotationCount || 0),
+    movesSinceLastRotation: Number(document.movesSinceLastRotation || 0),
+    rotating: false,
+    rotationAnimationTimer: null,
     board: [...document.board],
     players: document.players.map((player) => ({
       socketId: null,
@@ -1032,12 +1180,106 @@ function restoreRoomFromActiveDocument(document) {
   };
 }
 
+function areBothPlayersOffline(room) {
+  return (
+    room &&
+    room.players.length === 2 &&
+    room.players.every((player) => !player.connected)
+  );
+}
+
+function isBothOfflineExpired(roomOrDocument) {
+  const bothOfflineSince = roomOrDocument?.bothOfflineSince;
+
+  if (!bothOfflineSince) {
+    return false;
+  }
+
+  return (
+    Date.now() - new Date(bothOfflineSince).getTime() >=
+    BOTH_OFFLINE_TIMEOUT_MS
+  );
+}
+
+async function abandonRoom(roomId) {
+  const room = rooms.get(roomId);
+
+  if (room) {
+    room.players.forEach(clearPlayerDisconnectTimer);
+    clearBattleRoyaleTimer(room);
+    clearRotationAnimationTimer(room);
+    room.status = "abandoned";
+    room.winner = null;
+    room.reason = "both-offline-timeout";
+
+    io.to(room.roomId).emit("roomExpired", {
+      message: "雙方離線超過 3 分鐘，本局已自動結束。"
+    });
+
+    closeSpectatorsForRoom(room, {
+      message: "雙方玩家皆已離線，本次觀戰已結束。"
+    });
+
+    rooms.delete(roomId);
+  }
+
+  await ActiveRoom.deleteOne({ roomId });
+  console.log(`🧹 雙方離線過久，已清除房間：${roomId}`);
+}
+
+function scheduleDisconnectTimeout(room, player) {
+  if (!room || !player || player.connected || player.disconnectTimer) {
+    return;
+  }
+
+  player.disconnectTimer = setTimeout(() => {
+    finalizeDisconnectedRoom(room, player).catch((error) => {
+      console.error("❌ 離線逾時處理失敗：", error.message);
+    });
+  }, DISCONNECT_GRACE_PERIOD_MS);
+}
+
+async function cleanupAbandonedRooms() {
+  if (!isMongoConnected()) {
+    return;
+  }
+
+  const bothOfflineCutoff = new Date(Date.now() - BOTH_OFFLINE_TIMEOUT_MS);
+  const legacyStaleCutoff = new Date(Date.now() - LEGACY_STALE_ROOM_TIMEOUT_MS);
+
+  const abandonedRooms = await ActiveRoom.find({
+    status: "playing",
+    $or: [
+      {
+        bothOfflineSince: {
+          $ne: null,
+          $lte: bothOfflineCutoff
+        }
+      },
+      {
+        bothOfflineSince: null,
+        lastActivityAt: {
+          $lte: legacyStaleCutoff
+        }
+      }
+    ]
+  })
+    .select({ roomId: 1 })
+    .lean();
+
+  for (const item of abandonedRooms) {
+    await abandonRoom(item.roomId);
+  }
+
+  if (abandonedRooms.length > 0) {
+    await broadcastSpectatableRooms();
+  }
+}
+
 async function getOrRestoreRoom(roomId) {
   const inMemoryRoom = rooms.get(roomId);
 
   if (inMemoryRoom) {
-    // 房間仍在 Node.js 記憶體中，
-    // 但雙方都已經離線超過 3 分鐘。
     if (isBothOfflineExpired(inMemoryRoom)) {
       await abandonRoom(roomId);
       return null;
@@ -1056,8 +1298,6 @@ async function getOrRestoreRoom(roomId) {
     return null;
   }
 
-  // Render 重啟後，必須先檢查 MongoDB 保存的雙方離線時間。
-  // 已超過限制就不能再恢復舊棋盤。
   if (isBothOfflineExpired(document)) {
     await abandonRoom(roomId);
     return null;
@@ -1111,6 +1351,8 @@ async function getSpectatableRooms() {
       whitePlayer: whitePlayer?.name || "白棋玩家",
       currentTurn: room.currentTurn,
       moveCount: room.moves.length,
+      rotationCount: Number(room.rotationCount || 0),
+      movesUntilRotation: Math.max(0, ROTATING_BOARD_MOVES_PER_ROTATION - Number(room.movesSinceLastRotation || 0)),
       spectatorCount: getSpectatorCount(room.roomId),
       updatedAt: room.updatedAt
     };
@@ -1140,6 +1382,11 @@ function buildRoomState(room) {
     movesUntilShrink: Math.max(0, BATTLE_ROYALE_MOVES_PER_SHRINK - room.movesSinceLastShrink),
     nextShrinkAt: room.nextShrinkAt,
     shrinking: Boolean(room.shrinking),
+    rotationCount: room.rotationCount,
+    movesSinceLastRotation: room.movesSinceLastRotation,
+    movesUntilRotation: Math.max(0, ROTATING_BOARD_MOVES_PER_ROTATION - room.movesSinceLastRotation),
+    rotating: Boolean(room.rotating),
+    undoAllowed: !isSpecialModeRoom(room),
     board: room.board,
     players: room.players.map((player) => ({
       name: player.name,
@@ -1200,6 +1447,7 @@ function toHistoryDocument(room) {
     round: room.round,
     mode: room.mode,
     shrinkLevel: room.shrinkLevel,
+    rotationCount: room.rotationCount,
     activeMin: room.activeMin,
     activeMax: room.activeMax,
     players: room.players.map((player) => ({
@@ -1232,6 +1480,7 @@ async function finalizeRoom(room, winner, reason, options = {}) {
 
   room.players.forEach(clearPlayerDisconnectTimer);
   clearBattleRoyaleTimer(room);
+  clearRotationAnimationTimer(room);
 
   await Game.updateOne(
     { roomId: room.roomId },
@@ -1307,6 +1556,10 @@ async function startGame(player1, player2, options = {}) {
         : null,
     shrinkTimer: null,
     shrinking: false,
+    rotationCount: 0,
+    movesSinceLastRotation: 0,
+    rotating: false,
+    rotationAnimationTimer: null,
     board: Array(BOARD_CELL_COUNT).fill(0),
     players: [
       createLivePlayer(player1, options.player1Color || "black"),
@@ -1320,13 +1573,10 @@ async function startGame(player1, player2, options = {}) {
     roomChatMessages: (options.roomChatMessages || []).slice(-ROOM_CHAT_LIMIT),
     undoRequest: null,
     rematchVotes: new Set(),
-rematchStarting: false,
-finalized: false,
-
-// 新房間一開始兩位玩家都在線，因此設為 null。
-bothOfflineSince: null,
-
-startedAt: new Date()
+    rematchStarting: false,
+    finalized: false,
+    bothOfflineSince: null,
+    startedAt: new Date()
   };
 
   rooms.set(roomId, room);
@@ -1353,12 +1603,17 @@ startedAt: new Date()
   }
 
   emitRoomState(room);
-  await emitSystemRoomMessage(
-    room,
-    mode === GAME_MODE_BATTLE_ROYALE
-      ? `第 ${round} 局開始：⚔️ 大逃殺模式。每 60 秒或每 10 手會縮小一圈，黑棋先行。`
-      : `第 ${round} 局開始，黑棋先行。`
-  );
+  let startMessage = `第 ${round} 局開始，黑棋先行。`;
+
+  if (mode === GAME_MODE_BATTLE_ROYALE) {
+    startMessage = `第 ${round} 局開始：⚔️ 大逃殺模式。每 60 秒或每 10 手會縮小一圈，黑棋先行。`;
+  }
+
+  if (mode === GAME_MODE_ROTATING_BOARD) {
+    startMessage = `第 ${round} 局開始：🔄 輪盤五子棋。雙方每累積 10 手，棋盤會順時針旋轉 90 度；特殊模式暫不支援悔棋。`;
+  }
+
+  await emitSystemRoomMessage(room, startMessage);
   await broadcastSpectatableRooms();
 
   console.log(`🎮 房間建立成功：${roomId}`);
@@ -1404,127 +1659,13 @@ async function startRematch(oldRoom) {
   }
 
   clearBattleRoyaleTimer(oldRoom);
+  clearRotationAnimationTimer(oldRoom);
   rooms.delete(oldRoomId);
 
   io.to(newRoom.roomId).emit("chatHistory", newRoom.roomChatMessages);
   console.log(`🔄 同一組玩家開始第 ${newRoom.round} 局：${newRoom.roomId}`);
 }
-// ==========================================
-// 雙方同時離線：自動放棄棋局
-// ==========================================
 
-function areBothPlayersOffline(room) {
-  return (
-    room &&
-    room.players.length === 2 &&
-    room.players.every((player) => !player.connected)
-  );
-}
-
-function isBothOfflineExpired(roomOrDocument) {
-  const bothOfflineSince = roomOrDocument?.bothOfflineSince;
-
-  if (!bothOfflineSince) {
-    return false;
-  }
-
-  const offlineDuration =
-    Date.now() - new Date(bothOfflineSince).getTime();
-
-  return offlineDuration >= BOTH_OFFLINE_TIMEOUT_MS;
-}
-
-// 雙方都離線時，不判定任何人獲勝。
-// 直接刪除 active_rooms，避免下次進入網站又恢復舊棋盤。
-async function abandonRoom(roomId) {
-  const room = rooms.get(roomId);
-
-  if (room) {
-    room.players.forEach(clearPlayerDisconnectTimer);
-
-    room.status = "abandoned";
-    room.winner = null;
-    room.reason = "both-offline-timeout";
-
-    // 理論上雙方都已離線，但仍保留事件，
-    // 避免剛好有舊分頁尚未完全關閉。
-    io.to(room.roomId).emit("roomExpired", {
-      message: "雙方離線超過 3 分鐘，本局已自動結束。"
-    });
-
-    closeSpectatorsForRoom(room, {
-      message: "雙方玩家皆已離線，本次觀戰已結束。"
-    });
-
-    rooms.delete(roomId);
-  }
-
-  await ActiveRoom.deleteOne({ roomId });
-
-  console.log(`🧹 雙方離線過久，已清除房間：${roomId}`);
-}
-
-// 建立或保留單一玩家的 3 分鐘離線計時器。
-function scheduleDisconnectTimeout(room, player) {
-  if (!room || !player || player.connected || player.disconnectTimer) {
-    return;
-  }
-
-  player.disconnectTimer = setTimeout(() => {
-    finalizeDisconnectedRoom(room, player).catch((error) => {
-      console.error("❌ 離線逾時處理失敗：", error.message);
-    });
-  }, DISCONNECT_GRACE_PERIOD_MS);
-}
-
-// 即使 Render 重啟導致記憶體中的 setTimeout 消失，
-// 仍可透過 MongoDB 保存的時間清除舊房間。
-async function cleanupAbandonedRooms() {
-  if (!isMongoConnected()) {
-    return;
-  }
-
-  const bothOfflineCutoff =
-    new Date(Date.now() - BOTH_OFFLINE_TIMEOUT_MS);
-
-  const legacyStaleCutoff =
-    new Date(Date.now() - LEGACY_STALE_ROOM_TIMEOUT_MS);
-
-  const abandonedRooms = await ActiveRoom.find({
-    status: "playing",
-
-    $or: [
-      // 新版房間：雙方離線滿 3 分鐘。
-      {
-        bothOfflineSince: {
-          $ne: null,
-          $lte: bothOfflineCutoff
-        }
-      },
-
-      // 舊版房間：沒有 bothOfflineSince 欄位，
-      // 但超過 15 分鐘沒有任何活動。
-      {
-        bothOfflineSince: null,
-        lastActivityAt: {
-          $lte: legacyStaleCutoff
-        }
-      }
-    ]
-  })
-    .select({ roomId: 1 })
-    .lean();
-
-  if (abandonedRooms.length === 0) {
-    return;
-  }
-
-  for (const item of abandonedRooms) {
-    await abandonRoom(item.roomId);
-  }
-
-  await broadcastSpectatableRooms();
-}
 // ==========================================
 // 玩家離線逾時
 // ==========================================
@@ -1533,11 +1674,6 @@ async function finalizeDisconnectedRoom(room, disconnectedPlayer) {
     return;
   }
 
-  // ========================================
-  // 狀況 1：雙方都離線
-  // ========================================
-  // 不判定勝負，不計算積分。
-  // 必須等到「雙方同時離線」滿 3 分鐘後再刪除。
   if (areBothPlayersOffline(room)) {
     if (isBothOfflineExpired(room)) {
       await abandonRoom(room.roomId);
@@ -1547,11 +1683,6 @@ async function finalizeDisconnectedRoom(room, disconnectedPlayer) {
     return;
   }
 
-  // ========================================
-  // 狀況 2：只有一位玩家離線
-  // ========================================
-  // 保留原本規則：
-  // 離線玩家超過 3 分鐘沒有回來，對手獲勝。
   const opponent = room.players.find(
     (player) => player.playerToken !== disconnectedPlayer.playerToken
   );
@@ -1574,6 +1705,7 @@ async function finalizeDisconnectedRoom(room, disconnectedPlayer) {
     rooms.delete(room.roomId);
   }
 }
+
 // ==========================================
 // Socket.IO
 // ==========================================
@@ -1963,14 +2095,12 @@ io.on("connection", (socket) => {
 
       removeSpectator(socket, { broadcast: false });
 
-player.socketId = socket.id;
-player.socket = socket;
-player.connected = true;
+      player.socketId = socket.id;
+      player.socket = socket;
+      player.connected = true;
+      room.bothOfflineSince = null;
 
-// 只要其中一位玩家重新連線，就不再視為雙方離線。
-room.bothOfflineSince = null;
-
-socket.data.roomId = roomId;
+      socket.data.roomId = roomId;
       socket.data.playerToken = playerToken;
       socket.data.displayName = player.name;
       socket.join(roomId);
@@ -1981,11 +2111,12 @@ socket.data.roomId = roomId;
       }
 
       await persistActiveRoom(room);
-      // Render 重啟後，記憶體中的離線計時器會消失。
-// 因此恢復房間時，幫尚未回來的玩家重新建立 3 分鐘計時器。
-for (const offlinePlayer of room.players.filter((item) => !item.connected)) {
-  scheduleDisconnectTimeout(room, offlinePlayer);
-}
+
+      // Render 完整重啟後，記憶體中的離線計時器會消失。
+      // 重新為尚未回來的玩家建立寬限計時器。
+      for (const offlinePlayer of room.players.filter((item) => !item.connected)) {
+        scheduleDisconnectTimeout(room, offlinePlayer);
+      }
 
       socket.emit("gameResumed", {
         roomId: room.roomId,
@@ -2048,6 +2179,11 @@ for (const offlinePlayer of room.players.filter((item) => !item.connected)) {
       return;
     }
 
+    if (room.rotating) {
+      socket.emit("errorMessage", "棋盤正在旋轉，請稍候再落子");
+      return;
+    }
+
     if (room.currentTurn !== player.color) {
       socket.emit("errorMessage", "現在還沒輪到您");
       return;
@@ -2099,7 +2235,20 @@ for (const offlinePlayer of room.players.filter((item) => !item.connected)) {
       room.movesSinceLastShrink += 1;
     }
 
+    if (isRotatingBoardRoom(room)) {
+      room.movesSinceLastRotation += 1;
+    }
+
     try {
+      if (
+        isRotatingBoardRoom(room) &&
+        room.movesSinceLastRotation >= ROTATING_BOARD_MOVES_PER_ROTATION
+      ) {
+        await rotateRotatingBoardRoom(room, player.color);
+        await broadcastSpectatableRooms();
+        return;
+      }
+
       await persistActiveRoom(room);
       emitRoomState(room);
       await broadcastSpectatableRooms();
@@ -2124,6 +2273,11 @@ for (const offlinePlayer of room.players.filter((item) => !item.connected)) {
 
     if (!room || room.status !== "playing") {
       socket.emit("errorMessage", "目前無法悔棋");
+      return;
+    }
+
+    if (isSpecialModeRoom(room)) {
+      socket.emit("errorMessage", "特殊模式暫時不支援悔棋");
       return;
     }
 
@@ -2174,6 +2328,12 @@ for (const offlinePlayer of room.players.filter((item) => !item.connected)) {
 
     if (!room?.undoRequest) {
       socket.emit("errorMessage", "目前沒有待處理的悔棋申請");
+      return;
+    }
+
+    if (isSpecialModeRoom(room)) {
+      room.undoRequest = null;
+      socket.emit("errorMessage", "特殊模式暫時不支援悔棋");
       return;
     }
 
@@ -2391,39 +2551,39 @@ for (const offlinePlayer of room.players.filter((item) => !item.connected)) {
       return;
     }
 
-player.connected = false;
-player.socket = null;
+    player.connected = false;
+    player.socket = null;
 
-clearPlayerDisconnectTimer(player);
+    clearPlayerDisconnectTimer(player);
 
-if (room.status === "playing") {
-  // 如果兩位玩家都已經離線，開始記錄雙方離線時間。
-  if (areBothPlayersOffline(room)) {
-    if (!room.bothOfflineSince) {
-      room.bothOfflineSince = new Date();
+    if (room.status === "playing") {
+      pauseBattleRoyaleShrink(room);
+
+      if (areBothPlayersOffline(room)) {
+        if (!room.bothOfflineSince) {
+          room.bothOfflineSince = new Date();
+        }
+
+        await emitSystemRoomMessage(
+          room,
+          "雙方玩家皆已離線。若 3 分鐘內無人重新連線，本局將自動結束且不計分。"
+        );
+      } else {
+        room.bothOfflineSince = null;
+
+        await emitSystemRoomMessage(
+          room,
+          isBattleRoyaleRoom(room)
+            ? `${player.name} 暫時離線，系統將保留棋局 3 分鐘；大逃殺縮圈倒數已暫停。`
+            : `${player.name} 暫時離線，系統將保留棋局 3 分鐘。`
+        );
+      }
+
+      emitRoomState(room);
+      scheduleDisconnectTimeout(room, player);
+    } else {
+      rooms.delete(roomId);
     }
-
-    await emitSystemRoomMessage(
-      room,
-      "雙方玩家皆已離線。若 3 分鐘內無人重新連線，本局將自動結束。"
-    );
-  } else {
-    // 仍有一人在線，不算雙方同時離線。
-    room.bothOfflineSince = null;
-
-    await emitSystemRoomMessage(
-      room,
-      `${player.name} 暫時離線，系統將保留棋局 3 分鐘。`
-    );
-  }
-
-  emitRoomState(room);
-
-  // 單一玩家離線或雙方離線都先建立計時器。
-  scheduleDisconnectTimeout(room, player);
-} else {
-  rooms.delete(roomId);
-}
   });
 });
 
@@ -2471,7 +2631,7 @@ app.get("/api/active-rooms", async (_req, res) => {
   try {
     const activeRooms = await ActiveRoom.find({ status: "playing" })
       .sort({ updatedAt: -1 })
-      .select({ roomId: 1, seriesId: 1, round: 1, mode: 1, activeMin: 1, activeMax: 1, players: 1, currentTurn: 1, updatedAt: 1 })
+      .select({ roomId: 1, seriesId: 1, round: 1, mode: 1, activeMin: 1, activeMax: 1, rotationCount: 1, movesSinceLastRotation: 1, players: 1, currentTurn: 1, updatedAt: 1 })
       .lean();
 
     const safeRooms = activeRooms.map((room) => ({
@@ -2480,6 +2640,8 @@ app.get("/api/active-rooms", async (_req, res) => {
       round: room.round,
       mode: cleanGameMode(room.mode),
       activeBoardSize: Number(room.activeMax ?? BOARD_SIZE - 1) - Number(room.activeMin ?? 0) + 1,
+      rotationCount: Number(room.rotationCount || 0),
+      movesUntilRotation: Math.max(0, ROTATING_BOARD_MOVES_PER_ROTATION - Number(room.movesSinceLastRotation || 0)),
       currentTurn: room.currentTurn,
       updatedAt: room.updatedAt,
       players: room.players.map((player) => ({
@@ -2525,17 +2687,14 @@ setInterval(() => {
       );
     });
 }, 60 * 1000);
-// ==========================================
-// 每分鐘清除雙方離線過久或舊版殘留房間
-// ==========================================
+
+// 每分鐘清理雙方離線過久，或修改前留下的殘留房間。
 setInterval(() => {
   cleanupAbandonedRooms().catch((error) => {
-    console.error(
-      "❌ 自動清理離線房間失敗：",
-      error.message
-    );
+    console.error("❌ 自動清理離線房間失敗：", error.message);
   });
 }, ABANDONED_ROOM_CHECK_INTERVAL_MS);
+
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log("🚀 Server 已啟動");
   console.log(`🌐 本機網址：http://localhost:${PORT}`);
